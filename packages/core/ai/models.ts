@@ -1,7 +1,99 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
 import { openai } from "@ai-sdk/openai";
+import { createGroq } from "@ai-sdk/groq";
 import { embed, embedMany, type EmbeddingModel } from "ai";
+
+type LanguageModelV4 = ReturnType<typeof anthropic>;
+
+interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+  laps?: number;
+}
+
+async function withExponentialBackoff<T>(
+  fn: () => PromiseLike<T>,
+  { maxRetries, baseDelayMs }: { maxRetries: number; baseDelayMs: number },
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        const delay = baseDelayMs * 2 ** attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function customFallback(
+  models: LanguageModelV4[],
+  retryConfig: RetryConfig = { maxRetries: 2, baseDelayMs: 500, laps: 2 },
+): LanguageModelV4 {
+  const first = models[0];
+  if (!first) {
+    throw new Error("customFallback requires at least one model");
+  }
+  const { maxRetries, baseDelayMs, laps = 2 } = retryConfig;
+  
+  const fallbackModel = {
+    specificationVersion: 'v4' as const,
+    async doGenerate(options: Parameters<LanguageModelV4['doGenerate']>[0]) {
+      let lastError: unknown;
+      for (let lap = 0; lap < laps; lap++) {
+        for (const model of models) {
+          try {
+            return await withExponentialBackoff(
+              () => model.doGenerate(options),
+              { maxRetries, baseDelayMs },
+            );
+          } catch (error) {
+            lastError = error;
+            console.error(`[Fallback] Model ${model.modelId} failed on lap ${lap + 1}:`, error);
+          }
+        }
+      }
+      throw lastError;
+    },
+    async doStream(options: Parameters<LanguageModelV4['doStream']>[0]) {
+      let lastError: unknown;
+      for (let lap = 0; lap < laps; lap++) {
+        for (const model of models) {
+          try {
+            return await withExponentialBackoff(
+              () => model.doStream(options),
+              { maxRetries, baseDelayMs },
+            );
+          } catch (error) {
+            lastError = error;
+            console.error(`[Fallback] Model ${model.modelId} failed on lap ${lap + 1}:`, error);
+          }
+        }
+      }
+      throw lastError;
+    },
+  };
+
+  return new Proxy(first, {
+    get(target, prop, receiver) {
+      if (prop === 'doGenerate') {
+        return fallbackModel.doGenerate;
+      }
+      if (prop === 'doStream') {
+        return fallbackModel.doStream;
+      }
+      if (prop === 'specificationVersion') {
+        return 'v4';
+      }
+      return Reflect.get(target, prop, receiver);
+    }
+  }) as LanguageModelV4;
+}
 
 /**
  * The AI-SDK provider layer (spec 02 §1).
@@ -14,14 +106,29 @@ import { embed, embedMany, type EmbeddingModel } from "ai";
  *  - ingestion: cheap, high-volume (runs on every memory forever — keep near-free).
  *  - reasoning: Ask / decision mode; default to the most capable model.
  */
+
+const groq = createGroq({
+  baseURL: "https://api.groq.com/openai/v1", // Note: The user mentioned "openai/gpt-oss-120b", so maybe OpenRouter or standard groq. Assuming standard groq with createGroq.
+});
+
 const REGISTRY = {
   anthropic: {
     ingestion: anthropic("claude-haiku-4-5-20251001"),
     reasoning: anthropic("claude-opus-4-8"), // or claude-sonnet-4-6 for cost
   },
   google: {
-    ingestion: google("gemini-2.5-flash"),
-    reasoning: google("gemini-2.5-flash"),
+    ingestion: customFallback([
+      google("gemini-2.5-flash"),
+      groq("openai/gpt-oss-120b"),
+    ]),
+    reasoning: customFallback([
+      google("gemini-2.5-flash"),
+      groq("openai/gpt-oss-120b"),
+    ]),
+  },
+  groq: {
+    ingestion: groq("openai/gpt-oss-120b"),
+    reasoning: groq("openai/gpt-oss-120b"),
   },
 } as const;
 
