@@ -1,10 +1,14 @@
 import { Worker, type Job } from "bullmq";
 import {
   INGESTION_QUEUE_NAME,
+  CONSOLIDATION_QUEUE_NAME,
   createRedisConnection,
   runIngestion,
+  runConsolidation,
+  scheduleNightlyConsolidation,
   markMemoryFailed,
   type IngestionJobData,
+  type ConsolidationJobData,
 } from "@repo/core";
 
 /**
@@ -76,13 +80,36 @@ worker.on("error", (err) => {
   console.error("[worker] error:", err);
 });
 
-// Graceful shutdown so in-flight jobs finish and the connection closes cleanly.
+// --- Consolidation worker (spec 02 §5) — the nightly "sleep" job -----------
+
+const consolidationWorker = new Worker<ConsolidationJobData>(
+  CONSOLIDATION_QUEUE_NAME,
+  async (job: Job<ConsolidationJobData>) => {
+    const reports = await runConsolidation({ userId: job.data.userId });
+    console.log(
+      `[worker] consolidation done for ${reports.length} user(s):`,
+      JSON.stringify(reports),
+    );
+  },
+  { connection: createRedisConnection(), concurrency: 1 },
+);
+
+consolidationWorker.on("error", (err) => {
+  console.error("[worker] consolidation error:", err);
+});
+
+// Register the nightly repeatable job (idempotent — fixed jobId).
+scheduleNightlyConsolidation()
+  .then(() => console.log("[worker] nightly consolidation scheduled"))
+  .catch((err) => console.error("[worker] could not schedule consolidation:", err));
+
+// Graceful shutdown so in-flight jobs finish and connections close cleanly.
 async function shutdown(signal: string) {
   console.log(`[worker] ${signal} received — closing…`);
-  await worker.close();
+  await Promise.all([worker.close(), consolidationWorker.close()]);
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-console.log("[worker] starting ingestion worker…");
+console.log("[worker] starting ingestion + consolidation workers…");

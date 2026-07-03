@@ -70,3 +70,43 @@ export async function enqueueIngestion(memoryId: string): Promise<void> {
   const data: IngestionJobData = { memoryId };
   await getIngestionQueue().add("ingest", data, INGESTION_JOB_OPTS);
 }
+
+// ---------------------------------------------------------------------------
+// Consolidation queue (spec 02 §5) — the nightly "sleep" job. A single
+// repeatable job fans out over all users inside the worker.
+// ---------------------------------------------------------------------------
+
+export const CONSOLIDATION_QUEUE_NAME = "consolidation";
+
+/** null userId = every user; the worker resolves the list. */
+export interface ConsolidationJobData {
+  userId: string | null;
+}
+
+/** Cron for the nightly run. Server-local time; tune per deployment. */
+export const CONSOLIDATION_CRON = process.env.CONSOLIDATION_CRON ?? "0 3 * * *";
+
+let consolidationQueue: Queue | null = null;
+
+export function getConsolidationQueue(): Queue {
+  if (!consolidationQueue) {
+    consolidationQueue = new Queue(CONSOLIDATION_QUEUE_NAME, {
+      connection: createRedisConnection(),
+    });
+  }
+  return consolidationQueue;
+}
+
+/**
+ * Register the nightly repeatable job (idempotent — fixed jobId, so re-running
+ * at worker boot just re-affirms the schedule).
+ */
+export async function scheduleNightlyConsolidation(): Promise<void> {
+  const data: ConsolidationJobData = { userId: null };
+  await getConsolidationQueue().add("nightly", data, {
+    repeat: { pattern: CONSOLIDATION_CRON },
+    jobId: "nightly-consolidation",
+    removeOnComplete: true,
+    removeOnFail: false,
+  });
+}
