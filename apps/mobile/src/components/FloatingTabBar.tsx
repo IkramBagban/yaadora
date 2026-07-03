@@ -10,7 +10,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
 import { AppText } from './AppText';
 import { springs, durations } from '../theme/motion';
 import { hairlineWidth, radius } from '../theme/tokens';
@@ -30,7 +30,7 @@ const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
  * surface on Android. The indicator slides on a snappy spring; the whole bar
  * ducks out of the way while the keyboard is up.
  */
-export function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+export function FloatingTabBar({ state, descriptors, navigation }: MaterialTopTabBarProps) {
   const { colors, dark } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -141,6 +141,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: 'center',
+    zIndex: 10,
+    elevation: 10,
   },
   bar: {
     flexDirection: 'row',
