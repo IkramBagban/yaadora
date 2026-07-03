@@ -7,13 +7,14 @@ import {
   getMemoryDetail,
 } from "./routes/memories";
 import { health } from "./routes/health";
+import { ask } from "./routes/ask";
 
 /**
  * apps/server — the Yaadora HTTP API (spec 01 §2, spec 03 §1).
  *
- * A small typed router on Bun.serve's `routes` (no express). Week 1–2 scope:
- * capture (the sacred fast path), timeline reads, memory detail, health.
- * Ask/reason + reminders are later waves.
+ * A small typed router on Bun.serve's `routes` (no express): capture (the
+ * sacred fast path), timeline reads, memory detail, health, and Ask (streamed
+ * grounded recall). Reminders + decision mode are later waves.
  *
  * Run: `bun run src/index.ts` (or `bun run dev` for hot reload).
  */
@@ -42,6 +43,9 @@ const server = Bun.serve({
     },
     "/memories/:id": {
       GET: (req) => getMemoryDetail(req, req.params.id),
+    },
+    "/ask": {
+      POST: (req) => ask(req),
     },
   },
   // Unmatched routes.

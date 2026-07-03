@@ -15,8 +15,19 @@ export {
   createRedisConnection,
   getIngestionQueue,
   enqueueIngestion,
+  CONSOLIDATION_QUEUE_NAME,
+  CONSOLIDATION_CRON,
+  getConsolidationQueue,
+  scheduleNightlyConsolidation,
 } from "./queues";
-export type { IngestionJobData } from "./queues";
+export type { IngestionJobData, ConsolidationJobData } from "./queues";
+
+// Nightly consolidation (spec 02 §5) — run by apps/worker on the schedule above.
+export { runConsolidation } from "./consolidation";
+export type {
+  ConsolidationOptions,
+  ConsolidationReport,
+} from "./consolidation";
 
 // The ingestion pipeline (spec 02 §2). `runIngestion` is the worker entrypoint.
 export {
@@ -32,3 +43,25 @@ export type {
   MentionInput,
   EntityResolution,
 } from "./ingestion";
+
+// The recall / retrieval engine (spec 02 §3). `answerQuestion` is the server's
+// Ask entrypoint — hybrid retrieval → rerank → grounded, cited, streamed answer.
+export {
+  answerQuestion,
+  understandQuery,
+  QueryUnderstandingSchema,
+  rerankCandidates,
+  buildCandidates,
+  assembleContext,
+  streamGroundedAnswer,
+  REFUSAL_TEXT,
+} from "./retrieval";
+export type {
+  AskResult,
+  UnderstoodQuery,
+  QueryUnderstanding,
+  Candidate,
+  RerankedCandidate,
+  Citation,
+  AssembledContext,
+} from "./retrieval";

@@ -45,6 +45,14 @@ export const facts = pgTable(
     sourceMemory: uuid("source_memory")
       .notNull()
       .references(() => memories.id), // PROVENANCE, always
+    // Salience prior (spec 02 §5.4): recency × frequency × emotional weight × pins.
+    // Rebuilt nightly by consolidation; used ONLY as a rerank tie-breaker in
+    // retrieval — never a filter, never deletes.
+    salience: real("salience").notNull().default(0),
+    // Genuine-conflict flag (spec 02 §2.5): points at the incompatible fact from
+    // the same period. Non-null → surface to the user ("has this changed?").
+    // Plain uuid (app-level integrity, like superseded_by).
+    conflictsWith: uuid("conflicts_with"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

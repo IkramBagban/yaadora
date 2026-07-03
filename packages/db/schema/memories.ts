@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, vector, index } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  vector,
+  boolean,
+  real,
+  index,
+} from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { tsvector } from "./columns";
 
@@ -27,6 +36,11 @@ export const memories = pgTable(
     source: text("source").notNull().default("manual"), // manual | voice | import
     embedding: vector("embedding", { dimensions: 1536 }),
     status: text("status").notNull().default("pending"), // pending | processing | processed | failed
+    // Salience prior (spec 02 §5.4) — rebuilt nightly, rerank tie-breaker only.
+    salience: real("salience").notNull().default(0),
+    // User pin: a hard boost input to the salience score. Immutable raw_text is
+    // untouched; pinning is metadata, never a content edit.
+    pinned: boolean("pinned").notNull().default(false),
     // Lexical channel: generated tsvector over raw_text (spec 01 §4).
     fts: tsvector("fts").generatedAlwaysAs(
       sql`to_tsvector('english', "raw_text")`,
