@@ -1,4 +1,3 @@
-import { embedMany } from "ai";
 import {
   db,
   memories,
@@ -8,7 +7,7 @@ import {
   sql,
 } from "@repo/db";
 import type { NewFact } from "@repo/db";
-import { embeddingModel } from "../ai/models";
+import { embedTexts } from "../ai/models";
 import { extract, type Extraction } from "./extraction";
 import { linkEntities, type MentionInput, type EntityResolution } from "./linking";
 import { reconcileAndInsertFact } from "./supersession";
@@ -88,7 +87,7 @@ export async function runIngestion(memoryId: string): Promise<void> {
   const mentionNames = extraction.entities.map((e) => e.canonicalGuess);
   const values = [memory.rawText, ...factTexts, ...mentionNames];
 
-  const { embeddings } = await embedMany({ model: embeddingModel, values });
+  const { embeddings } = await embedTexts(values);
 
   const rawEmbedding = embeddings[0];
   const factEmbeddings = embeddings.slice(1, 1 + factTexts.length);

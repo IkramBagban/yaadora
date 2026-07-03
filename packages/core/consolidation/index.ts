@@ -1,4 +1,4 @@
-import { generateObject, embed, embedMany } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
 import {
   db,
@@ -16,7 +16,7 @@ import {
   rescoreSalience,
   type NewFact,
 } from "@repo/db";
-import { ingestionModel, reasoningModel, embeddingModel } from "../ai/models";
+import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/models";
 
 /**
  * Consolidation — the nightly "sleep" job (spec 02 §5). Rebuildable from the
@@ -89,10 +89,7 @@ Known current facts:
 ${factTexts.map((f) => `- ${f}`).join("\n")}`,
     });
 
-    const { embedding } = await embed({
-      model: embeddingModel,
-      value: object.profile,
-    });
+    const { embedding } = await embedText(object.profile);
     await updateEntityProfile(entity.id, object.profile, embedding);
     rebuilt++;
   }
@@ -169,10 +166,7 @@ async function minePatterns(userId: string): Promise<number> {
 
   if (insights.length === 0) return 0;
 
-  const { embeddings } = await embedMany({
-    model: embeddingModel,
-    values: insights.map((i) => i.insightText),
-  });
+  const { embeddings } = await embedTexts(insights.map((i) => i.insightText));
 
   const now = new Date();
   const rows: NewFact[] = insights.map((i, idx) => ({

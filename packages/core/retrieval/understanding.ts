@@ -1,7 +1,7 @@
-import { generateObject, embedMany } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
 import { findEntityCandidates, type TimeRange } from "@repo/db";
-import { reasoningModel, embeddingModel } from "../ai/models";
+import { reasoningModel, embedTexts } from "../ai/models";
 
 /**
  * Query understanding (spec 02 §3.1) — the first reasoning-tier call of Ask.
@@ -126,10 +126,7 @@ ${question}
   // Embed the search queries + entity surfaces together (one batched call).
   const entitySurfaces = object.entities.map((e) => e.surface);
   const values = [...object.searchQueries, ...entitySurfaces];
-  const { embeddings } =
-    values.length > 0
-      ? await embedMany({ model: embeddingModel, values })
-      : { embeddings: [] as number[][] };
+  const { embeddings } = await embedTexts(values);
 
   const queryEmbeddings = embeddings.slice(0, object.searchQueries.length);
   const entityEmbeddings = embeddings.slice(object.searchQueries.length);
