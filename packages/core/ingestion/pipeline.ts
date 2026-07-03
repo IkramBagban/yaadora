@@ -2,7 +2,6 @@ import { embedMany } from "ai";
 import {
   db,
   memories,
-  facts,
   users,
   eq,
   and,
@@ -12,17 +11,18 @@ import type { NewFact } from "@repo/db";
 import { embeddingModel } from "../ai/models";
 import { extract, type Extraction } from "./extraction";
 import { linkEntities, type MentionInput, type EntityResolution } from "./linking";
+import { reconcileAndInsertFact } from "./supersession";
 
 /**
  * The ingestion pipeline entrypoint (spec 02 §2), run by `apps/worker` on the
  * BullMQ `ingestion` queue — ONE job per captured memory.
  *
  *   load → extract (1 LLM call) → temporal resolve → entity link →
- *   fact insert (+ provenance) → multi-representation embeddings → processed
+ *   reconcile + fact insert (+ provenance) → multi-representation embeddings →
+ *   processed
  *
- * SKIPPED for now (later waves, TODO markers inline):
- *  - §2.5 contradiction / update / supersession detection
- *  - §5   nightly consolidation (entity profile rebuild, fact dedup, patterns)
+ * Reconciliation (§2.5) runs per-fact via reconcileAndInsertFact. Nightly
+ * consolidation (§5) runs separately in the consolidation queue.
  *
  * On unrecoverable failure this throws; the worker retries with backoff and
  * marks status='failed' after the final attempt (raw text is never lost).
@@ -109,34 +109,35 @@ export async function runIngestion(memoryId: string): Promise<void> {
     memoryText: memory.rawText,
   });
 
-  // 6. Atomic fact insert (§2.4) — every fact carries sourceMemory (provenance, always).
-  //
-  // TODO(§2.5 supersession — later wave): before inserting each fact, query
-  // currently-valid facts with the same subjectId + similar predicate
-  // (embedding + lexical). Duplicate → bump confidence; update → set old fact's
-  // validTo = occurredAt and supersededBy = newId; genuine conflict → keep both
-  // and flag for the user. Nothing is ever deleted. Until then we insert every
-  // extracted fact as a fresh row.
-  if (extraction.facts.length > 0) {
-    const rows: NewFact[] = extraction.facts.map((f, i) => {
-      const subjectId = resolveEntity(f.subject, resolution);
-      const objectId = resolveEntity(f.object, resolution);
-      return {
-        userId: memory.userId,
-        subjectId,
-        predicate: f.predicate,
-        objectText: f.object,
-        objectId,
-        factText: f.factText,
-        embedding: factEmbeddings[i] ?? null,
-        validFrom: parseDate(f.validFrom) ?? occurredAt,
-        factType: f.factType,
-        origin: "extraction",
-        confidence: f.confidence,
-        sourceMemory: memoryId, // PROVENANCE — never omitted
-      };
+  // 6. Atomic fact insert (§2.4) — every fact carries sourceMemory (provenance,
+  //    always). Each fact is reconciled against history FIRST (§2.5): duplicate →
+  //    reinforce; update → supersede the old fact; conflict → keep both, flagged.
+  //    Nothing is ever deleted. Facts are handled one at a time because a
+  //    supersession can depend on the fact just inserted before it.
+  for (let i = 0; i < extraction.facts.length; i++) {
+    const f = extraction.facts[i]!;
+    const embedding = factEmbeddings[i] ?? [];
+    const row: NewFact = {
+      userId: memory.userId,
+      subjectId: resolveEntity(f.subject, resolution),
+      predicate: f.predicate,
+      objectText: f.object,
+      objectId: resolveEntity(f.object, resolution),
+      factText: f.factText,
+      embedding: embedding.length ? embedding : null,
+      validFrom: parseDate(f.validFrom) ?? occurredAt,
+      factType: f.factType,
+      origin: "extraction",
+      confidence: f.confidence,
+      sourceMemory: memoryId, // PROVENANCE — never omitted
+    };
+    await reconcileAndInsertFact({
+      userId: memory.userId,
+      memoryId,
+      fact: row,
+      embedding,
+      occurredAt,
     });
-    await db.insert(facts).values(rows);
   }
 
   // TODO(reminders — later wave): extraction.intent carries hasFutureAction +

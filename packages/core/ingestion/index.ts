@@ -5,3 +5,5 @@ export { extract, ExtractionSchema } from "./extraction";
 export type { Extraction, ExtractionContext } from "./extraction";
 export { linkEntities } from "./linking";
 export type { MentionInput, EntityResolution } from "./linking";
+export { reconcileAndInsertFact } from "./supersession";
+export type { ReconcileInput } from "./supersession";
