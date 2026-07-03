@@ -68,10 +68,34 @@ export interface Citation {
   occurredAt: string | null;
 }
 
-export type AskMode = 'recall' | 'reason';
+export type AskMode = 'recall' | 'reason' | 'clarify';
+
+export type AskStepKind = 'search' | 'clarify' | 'synthesize';
+
+/** One visible step in the agent's reasoning trace. */
+export interface AskStep {
+  kind: AskStepKind;
+  label: string;
+  query?: string;
+  count?: number;
+}
+
+/** One in-session turn replayed to the stateless server for follow-up context. */
+export interface AskHistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 /** SSE frames streamed by POST /ask. */
 export type AskEvent =
+  | { type: 'step'; kind: AskStepKind; label: string; query?: string; count?: number }
   | { type: 'token'; text: string }
-  | { type: 'done'; citations: Citation[]; confidence: number; mode: AskMode }
+  | {
+      type: 'done';
+      citations: Citation[];
+      confidence: number;
+      mode: AskMode;
+      steps: AskStep[];
+      clarifyOptions?: string[];
+    }
   | { type: 'error'; message: string };

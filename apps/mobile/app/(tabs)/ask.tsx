@@ -1,25 +1,26 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   ScrollView,
   StyleSheet,
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
-import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
-import { useAsk } from '../../src/ask/useAsk';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { enqueueMemory } from '../../src/capture/outbox';
+import { useAskSession } from '../../src/ask/useAskSession';
 import { AppText } from '../../src/components/AppText';
-import { Caret } from '../../src/components/Caret';
-import { CitationChip } from '../../src/components/CitationChip';
-import { ErrorState } from '../../src/components/ErrorState';
+import { AskExchange } from '../../src/components/AskExchange';
 import { PressableScale } from '../../src/components/PressableScale';
 import { SuggestionChip } from '../../src/components/SuggestionChip';
+import { Toast } from '../../src/components/Toast';
 import { useKeyboardVisible } from '../../src/lib/useKeyboardVisible';
 import { durations } from '../../src/theme/motion';
 import { hairlineWidth, radius, space, typeScale } from '../../src/theme/tokens';
@@ -32,11 +33,12 @@ const SUGGESTIONS = [
 ];
 
 const TAB_BAR_CLEARANCE = 88;
-const LOW_CONFIDENCE = 0.5;
+const NEAR_BOTTOM = 96;
 
 /**
- * Ask — one question, one grounded answer, with tappable sources.
- * No history: each ask is fresh; the memory store is the history.
+ * Ask — an ephemeral conversation with your memory. Multi-turn follow-ups, a
+ * live thinking trace, and AI-asks-back clarification. Fresh each launch; the
+ * memory store is the only lasting history.
  */
 export default function AskScreen() {
   const { colors, dark } = useTheme();
@@ -44,12 +46,14 @@ export default function AskScreen() {
   const keyboardVisible = useKeyboardVisible();
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
+  const followRef = useRef(true);
 
   const [draft, setDraft] = useState('');
-  const { status, question, text, citations, confidence, mode, ask, cancel, reset } =
-    useAsk();
+  const [toastVisible, setToastVisible] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const streaming = status === 'streaming';
+  const { exchanges, streaming, send, retry, cancel, reset } = useAskSession();
+  const hasSession = exchanges.length > 0;
 
   const submit = (value?: string) => {
     const q = (value ?? draft).trim();
@@ -57,13 +61,38 @@ export default function AskScreen() {
     void Haptics.selectionAsync();
     Keyboard.dismiss();
     setDraft('');
-    void ask(q);
+    followRef.current = true;
+    send(q);
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   };
 
-  const askAnother = () => {
+  const newConversation = () => {
+    void Haptics.selectionAsync();
+    Keyboard.dismiss();
     reset();
-    setTimeout(() => inputRef.current?.focus(), 120);
+    setDraft('');
   };
+
+  const saveQuestion = (text: string) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    enqueueMemory(text);
+    setToastVisible(true);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastVisible(false), 1600);
+  };
+
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distance = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    // Once the user scrolls up mid-stream, stop auto-following until they return.
+    followRef.current = distance < NEAR_BOTTOM;
+  }, []);
+
+  const onContentSizeChange = useCallback(() => {
+    if (streaming && followRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    }
+  }, [streaming]);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
@@ -72,7 +101,24 @@ export default function AskScreen() {
         style={styles.screen}
       >
         <View style={[styles.screen, { paddingTop: insets.top + space.md }]}>
-          {status === 'idle' ? (
+          {hasSession && (
+            <Animated.View
+              entering={FadeIn.duration(durations.fade)}
+              style={[styles.topBar, { paddingHorizontal: space.xxl }]}
+            >
+              <PressableScale
+                accessibilityRole="button"
+                accessibilityLabel="New conversation"
+                onPress={newConversation}
+                hitSlop={12}
+                style={styles.newButton}
+              >
+                <Feather name="edit" size={18} color={colors.ink2} />
+              </PressableScale>
+            </Animated.View>
+          )}
+
+          {!hasSession ? (
             <View style={styles.idle}>
               <Animated.View entering={FadeIn.duration(durations.enter)} style={styles.idleText}>
                 <AppText variant="display" align="center">
@@ -97,102 +143,23 @@ export default function AskScreen() {
             <ScrollView
               ref={scrollRef}
               style={styles.screen}
-              contentContainerStyle={styles.answerContent}
+              contentContainerStyle={styles.feed}
               keyboardShouldPersistTaps="handled"
-              onContentSizeChange={() => {
-                if (streaming) scrollRef.current?.scrollToEnd({ animated: false });
-              }}
+              onScroll={onScroll}
+              scrollEventThrottle={64}
+              onContentSizeChange={onContentSizeChange}
             >
-              <Animated.View entering={FadeIn.duration(durations.fade)}>
-                <AppText variant="title" italic tone="ink2">
-                  {question}
-                </AppText>
-              </Animated.View>
-
-              {status === 'error' && !text ? (
-                <ErrorState
-                  title="Can't reach your memories right now"
-                  caption="Your question wasn't lost — try again in a moment."
-                  onRetry={() => void ask(question)}
+              {exchanges.map((exchange, i) => (
+                <AskExchange
+                  key={exchange.id}
+                  exchange={exchange}
+                  dim={i !== exchanges.length - 1}
+                  showRule={i > 0}
+                  onRetry={() => retry(exchange.id)}
+                  onSaveQuestion={() => saveQuestion(exchange.question)}
+                  onQuickReply={(text) => submit(text)}
                 />
-              ) : (
-                <AppText variant="body" style={styles.answerText}>
-                  {text}
-                  {streaming && <Caret />}
-                </AppText>
-              )}
-
-              {status === 'error' && text ? (
-                <Animated.View entering={FadeIn.duration(durations.fade)} style={styles.interrupted}>
-                  <AppText variant="caption" tone="ink3">
-                    The answer was interrupted.
-                  </AppText>
-                  <PressableScale onPress={() => void ask(question)} hitSlop={8}>
-                    <AppText variant="captionMedium" tone="accent">
-                      Try again
-                    </AppText>
-                  </PressableScale>
-                </Animated.View>
-              ) : null}
-
-              {status === 'done' && (
-                <Animated.View entering={FadeIn.duration(durations.enter)} style={styles.result}>
-                  {(mode === 'reason' || (confidence !== null && confidence < LOW_CONFIDENCE)) && (
-                    <View style={styles.metaRow}>
-                      {mode === 'reason' && (
-                        <View style={[styles.modeBadge, { backgroundColor: colors.accentSoft }]}>
-                          <AppText variant="micro" tone="accent">
-                            Reasoned
-                          </AppText>
-                        </View>
-                      )}
-                      {confidence !== null && confidence < LOW_CONFIDENCE && (
-                        <AppText variant="caption" tone="ink3">
-                          Low confidence — grounded in limited memories
-                        </AppText>
-                      )}
-                    </View>
-                  )}
-
-                  {citations.length > 0 && (
-                    <View style={styles.sources}>
-                      <AppText variant="micro" tone="ink3">
-                        Sources
-                      </AppText>
-                      {citations.map((citation, i) => (
-                        <CitationChip
-                          key={`${citation.memoryId}-${i}`}
-                          citation={citation}
-                          index={i}
-                          onPress={() =>
-                            router.push({
-                              pathname: '/memory/[id]',
-                              params: { id: citation.memoryId },
-                            })
-                          }
-                        />
-                      ))}
-                    </View>
-                  )}
-
-                  <Animated.View
-                    entering={FadeInDown.delay(citations.length * 40 + 120)
-                      .springify()
-                      .damping(18)
-                      .stiffness(220)}
-                    style={styles.askAnotherWrap}
-                  >
-                    <PressableScale
-                      onPress={askAnother}
-                      style={[styles.askAnother, { borderColor: colors.hairline }]}
-                    >
-                      <AppText variant="captionMedium" tone="ink2">
-                        Ask another
-                      </AppText>
-                    </PressableScale>
-                  </Animated.View>
-                </Animated.View>
-              )}
+              ))}
             </ScrollView>
           )}
 
@@ -216,7 +183,7 @@ export default function AskScreen() {
                 ref={inputRef}
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask anything…"
+                placeholder={hasSession ? 'Ask a follow-up…' : 'Ask anything…'}
                 placeholderTextColor={colors.ink3}
                 keyboardAppearance={dark ? 'dark' : 'light'}
                 selectionColor={colors.accent}
@@ -234,13 +201,20 @@ export default function AskScreen() {
                   hitSlop={8}
                   style={[
                     styles.sendButton,
-                    { backgroundColor: colors.surfaceAlt, borderWidth: hairlineWidth, borderColor: colors.hairline },
+                    {
+                      backgroundColor: colors.surfaceAlt,
+                      borderWidth: hairlineWidth,
+                      borderColor: colors.hairline,
+                    },
                   ]}
                 >
                   <View style={[styles.stopSquare, { backgroundColor: colors.ink2 }]} />
                 </PressableScale>
               ) : (
-                <Animated.View entering={FadeIn.duration(durations.quick)} exiting={FadeOut.duration(durations.quick)}>
+                <Animated.View
+                  entering={FadeIn.duration(durations.quick)}
+                  exiting={FadeOut.duration(durations.quick)}
+                >
                   <PressableScale
                     accessibilityRole="button"
                     accessibilityLabel="Ask"
@@ -259,6 +233,10 @@ export default function AskScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <View pointerEvents="none" style={[styles.toastWrap, { top: insets.top + space.sm }]}>
+        {toastVisible && <Toast label="Saved as memory" />}
+      </View>
     </View>
   );
 }
@@ -266,6 +244,14 @@ export default function AskScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    minHeight: 28,
+  },
+  newButton: {
+    padding: space.xs,
   },
   idle: {
     flex: 1,
@@ -280,49 +266,10 @@ const styles = StyleSheet.create({
     gap: space.sm + 2,
     alignItems: 'stretch',
   },
-  answerContent: {
+  feed: {
     paddingHorizontal: space.xxl,
     paddingTop: space.lg,
     paddingBottom: space.xxl,
-  },
-  answerText: {
-    marginTop: space.lg,
-  },
-  interrupted: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    marginTop: space.md,
-  },
-  result: {
-    marginTop: space.xxl,
-    gap: space.xl,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    flexWrap: 'wrap',
-  },
-  modeBadge: {
-    paddingHorizontal: space.sm + 2,
-    paddingVertical: space.xs,
-    borderRadius: radius.pill,
-  },
-  sources: {
-    gap: space.sm,
-  },
-  askAnotherWrap: {
-    alignItems: 'center',
-    marginTop: space.sm,
-  },
-  askAnother: {
-    paddingHorizontal: space.xl,
-    height: 40,
-    borderRadius: radius.pill,
-    borderWidth: hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   inputWrap: {
     paddingHorizontal: space.xxl,
@@ -353,5 +300,11 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 2,
+  },
+  toastWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
   },
 });

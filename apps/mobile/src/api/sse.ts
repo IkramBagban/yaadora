@@ -1,18 +1,20 @@
 import { fetch as streamingFetch } from 'expo/fetch';
 import { API_URL } from './config';
 import { ApiError, authHeaders } from './client';
-import type { AskEvent } from './types';
+import type { AskEvent, AskHistoryTurn } from './types';
 
 /**
  * POST /ask and consume its SSE stream. Uses expo/fetch, which (unlike RN's
  * global fetch) exposes the response body as a ReadableStream.
  *
- * Frames are `data: <json>\n\n`; malformed frames are skipped. Resolves when
- * the stream ends; rejects with ApiError on transport failure. Aborting the
- * signal stops silently.
+ * `history` is the ephemeral in-session transcript replayed for follow-up
+ * context; the server stays stateless. Frames are `data: <json>\n\n`; malformed
+ * frames are skipped. Resolves when the stream ends; rejects with ApiError on
+ * transport failure. Aborting the signal stops silently.
  */
 export async function streamAsk(
   question: string,
+  history: AskHistoryTurn[],
   onEvent: (event: AskEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
@@ -21,7 +23,7 @@ export async function streamAsk(
     res = await streamingFetch(`${API_URL}/ask`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, history }),
       signal,
     });
   } catch {
