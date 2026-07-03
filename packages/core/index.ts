@@ -54,14 +54,21 @@ export {
   buildCandidates,
   assembleContext,
   streamGroundedAnswer,
+  retrieveMemories,
   REFUSAL_TEXT,
 } from "./retrieval";
 export type {
+  AskHandle,
   AskResult,
+  AskMode,
+  AskStep,
+  AskHistoryTurn,
   UnderstoodQuery,
   QueryUnderstanding,
   Candidate,
   RerankedCandidate,
   Citation,
   AssembledContext,
+  SearchHit,
+  SearchOutcome,
 } from "./retrieval";
