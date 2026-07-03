@@ -1,0 +1,7 @@
+// The ingestion pipeline (spec 02 §2). One `runIngestion(memoryId)` entrypoint
+// for the worker; the stage functions are exported for testing/reuse.
+export { runIngestion, markMemoryFailed } from "./pipeline";
+export { extract, ExtractionSchema } from "./extraction";
+export type { Extraction, ExtractionContext } from "./extraction";
+export { linkEntities } from "./linking";
+export type { MentionInput, EntityResolution } from "./linking";

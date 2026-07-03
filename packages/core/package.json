@@ -1,0 +1,27 @@
+{
+  "name": "@repo/core",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.7",
+    "@ai-sdk/google": "^4.0.8",
+    "@ai-sdk/openai": "^4.0.7",
+    "@repo/db": "workspace:*",
+    "ai": "^7.0.14",
+    "bullmq": "^5.34.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.2"
+  }
+}
