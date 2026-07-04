@@ -36,12 +36,16 @@ export {
   extract,
   ExtractionSchema,
   linkEntities,
+  captureFromConversation,
+  CaptureGateSchema,
 } from "./ingestion";
 export type {
   Extraction,
   ExtractionContext,
   MentionInput,
   EntityResolution,
+  CaptureGate,
+  CaptureResult,
 } from "./ingestion";
 
 // The recall / retrieval engine (spec 02 §3). `answerQuestion` is the server's

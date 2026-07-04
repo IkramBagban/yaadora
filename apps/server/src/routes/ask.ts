@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { answerQuestion } from "@repo/core";
+import { answerQuestion, captureFromConversation } from "@repo/core";
 import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
 import { badRequest, unauthorized } from "../http";
@@ -23,7 +23,13 @@ const log = createLogger("server:ask");
  *   { type: "step", kind, label, query?, count? }
  *   { type: "token", text }
  *   { type: "done", citations, confidence, mode, steps, clarifyOptions? }
+ *   { type: "captured", memoryId, statement }   // when the turn was worth remembering
  *   { type: "error", message }
+ *
+ * Conversational capture (docs/architecture/02) runs AFTER the answer has fully
+ * streamed, so recall latency is untouched. It's best-effort: a salience gate
+ * decides whether the user's turn is worth remembering, and only keepers are
+ * persisted + surfaced via a `captured` frame (with one-tap undo on the client).
  */
 
 const MAX_HISTORY = 12;
@@ -113,8 +119,23 @@ export async function ask(req: Request): Promise<Response> {
           steps: final.steps.length,
           ms: Date.now() - startedAt,
         });
+
+        // Conversational capture — only the user's own turn, only after the
+        // answer is delivered. Best-effort: never throws (see core impl).
+        const capture = await captureFromConversation({
+          userId,
+          userText: question,
+          history,
+        });
+        if (capture.captured) {
+          send({
+            type: "captured",
+            memoryId: capture.memoryId,
+            statement: capture.statement,
+          });
+        }
       } catch (err) {
-        log.error("ask failed", err);
+        log.error("ask failed", err as Error);
         send({ type: "error", message: "Answer generation failed." });
       } finally {
         controller.close();
