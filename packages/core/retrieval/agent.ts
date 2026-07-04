@@ -239,8 +239,10 @@ export async function answerQuestion(params: {
         steps.push(step);
         onStep?.(step);
 
+        // Return ONLY JSON-serializable primitives: a Date here breaks the tool
+        // result's ModelMessage schema and fails the next agent step.
         return created
-          ? { ok: true, reminderId: created.id, dueAt: created.dueAt }
+          ? { ok: true, reminderId: created.id, dueAt: due.toISOString() }
           : { ok: false, error: "Failed to save the reminder." };
       },
     }),
