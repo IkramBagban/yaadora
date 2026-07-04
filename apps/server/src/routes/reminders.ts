@@ -160,6 +160,25 @@ export async function confirmSuggestedReminder(
   return json(updated);
 }
 
+/** POST /reminders/:id/complete — mark a reminder done. Owner-scoped. */
+export async function completeReminder(req: Request, id: string): Promise<Response> {
+  const userId = authenticate(req);
+  if (!userId) return unauthorized();
+
+  const [updated] = await db
+    .update(reminders)
+    .set({ status: "done" })
+    .where(and(eq(reminders.id, id), eq(reminders.userId, userId)))
+    .returning({ id: reminders.id, status: reminders.status });
+
+  if (!updated) {
+    log.debug("reminder complete: not found", { userId, reminderId: id });
+    return notFound("Reminder not found.");
+  }
+  log.info("reminder completed", { userId, reminderId: id });
+  return json(updated);
+}
+
 /** DELETE /reminders/:id — cancel / undo. Soft (status='dismissed'), scoped to owner. */
 export async function cancelReminder(req: Request, id: string): Promise<Response> {
   const userId = authenticate(req);

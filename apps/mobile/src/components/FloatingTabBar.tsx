@@ -23,6 +23,7 @@ const INDICATOR_INSET = 5;
 const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'feather',
   ask: 'message-circle',
+  reminders: 'bell',
 };
 
 /**

@@ -11,6 +11,7 @@ import { CitationChip } from './CitationChip';
 import { ErrorState } from './ErrorState';
 import { PressableScale } from './PressableScale';
 import { ReasonedTrace } from './ReasonedTrace';
+import { ReminderChip } from './ReminderChip';
 import { SuggestionChip } from './SuggestionChip';
 import { ThinkingLine } from './ThinkingLine';
 
@@ -131,6 +132,10 @@ export function AskExchange({
       {settled && (
         <View style={styles.footer}>
           {exchange.mode === 'reason' && <ReasonedTrace steps={exchange.steps} />}
+
+          {exchange.reminderSuggestion && (
+            <ReminderChip suggestion={exchange.reminderSuggestion} />
+          )}
 
           {clarify && exchange.clarifyOptions.length > 0 && (
             <View style={styles.quickReplies}>

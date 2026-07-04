@@ -25,6 +25,7 @@ export default function TabsLayout() {
     >
       <MaterialTopTabs.Screen name="index" options={{ title: 'Add' }} />
       <MaterialTopTabs.Screen name="ask" options={{ title: 'Ask' }} />
+      <MaterialTopTabs.Screen name="reminders" options={{ title: 'Reminders' }} />
     </MaterialTopTabs>
   );
 }

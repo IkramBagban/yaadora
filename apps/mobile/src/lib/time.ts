@@ -54,3 +54,46 @@ export function formatDateLong(iso: string): string {
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return `${date} · ${time}`;
 }
+
+function startOfDayD(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Reminder due time: "Today · 3:00 PM" · "Tomorrow · 9:00 AM" · "Sun · 3:00 PM" · "Jul 12 · 3:00 PM". */
+export function dueLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const delta = Math.round((startOfDayD(d) - startOfDayD(now)) / DAY);
+  let day: string;
+  if (delta === 0) day = 'Today';
+  else if (delta === 1) day = 'Tomorrow';
+  else if (delta === -1) day = 'Yesterday';
+  else if (delta > 1 && delta < 7) day = d.toLocaleDateString(undefined, { weekday: 'long' });
+  else {
+    const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+    day = d.toLocaleDateString(undefined, opts);
+  }
+  return `${day} · ${time}`;
+}
+
+/** Section bucket for grouping upcoming reminders. */
+export function dueGroup(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const delta = Math.round((startOfDayD(d) - startOfDayD(now)) / DAY);
+  if (delta < 0) return 'Overdue';
+  if (delta === 0) return 'Today';
+  if (delta === 1) return 'Tomorrow';
+  if (delta < 7) return 'This week';
+  if (delta < 30) return 'Later';
+  return 'Someday';
+}
+
+/** Short countdown: "overdue" · "in 40m" · "in 3h" · "in 2d". */
+export function dueCountdown(iso: string, now: Date = new Date()): string {
+  const diff = new Date(iso).getTime() - now.getTime();
+  if (diff <= 0) return 'overdue';
+  if (diff < HOUR) return `in ${Math.max(1, Math.round(diff / MINUTE))}m`;
+  if (diff < DAY) return `in ${Math.round(diff / HOUR)}h`;
+  return `in ${Math.round(diff / DAY)}d`;
+}

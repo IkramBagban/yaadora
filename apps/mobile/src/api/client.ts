@@ -1,5 +1,13 @@
 import { API_URL, AUTH_TOKEN } from './config';
-import type { CreatedMemory, MemoryDetail, MemoryPage, MemorySource } from './types';
+import type {
+  CreatedMemory,
+  MemoryDetail,
+  MemoryPage,
+  MemorySource,
+  Reminder,
+  ReminderList,
+  ReminderScope,
+} from './types';
 
 const TIMEOUT_MS = 8000;
 
@@ -84,5 +92,42 @@ export const api = {
 
   getMemory(id: string): Promise<MemoryDetail> {
     return request<MemoryDetail>(`/memories/${encodeURIComponent(id)}`);
+  },
+
+  // --- reminders -----------------------------------------------------------
+
+  listReminders(scope: ReminderScope = 'upcoming'): Promise<ReminderList> {
+    return request<ReminderList>(`/reminders?scope=${scope}`);
+  },
+
+  /** Save a reminder directly (e.g. from the live Ask chip). */
+  confirmReminder(input: {
+    text: string;
+    dueAt: string;
+    sourceMemoryId?: string;
+    origin?: 'suggested' | 'manual';
+  }): Promise<Reminder> {
+    return request<Reminder>('/reminders/confirm', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Accept a stored suggestion: promote 'suggested' → 'pending'. */
+  acceptSuggestion(id: string): Promise<Reminder> {
+    return request<Reminder>(`/reminders/${encodeURIComponent(id)}/confirm`, {
+      method: 'POST',
+    });
+  },
+
+  completeReminder(id: string): Promise<{ id: string; status: string }> {
+    return request(`/reminders/${encodeURIComponent(id)}/complete`, {
+      method: 'POST',
+    });
+  },
+
+  /** Cancel / dismiss (also used for undo). */
+  cancelReminder(id: string): Promise<{ id: string; status: string }> {
+    return request(`/reminders/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
 };

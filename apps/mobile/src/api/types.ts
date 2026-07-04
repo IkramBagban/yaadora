@@ -1,6 +1,32 @@
 /** Wire types matching apps/server responses. Do not invent fields here. */
 
-export type MemorySource = 'manual' | 'voice';
+export type MemorySource = 'manual' | 'voice' | 'conversation' | 'import' | (string & {});
+
+/** A reminder (docs/specs/reminder-feature). */
+export type ReminderStatus =
+  | 'suggested'
+  | 'pending'
+  | 'done'
+  | 'dismissed'
+  | (string & {});
+export type ReminderOrigin = 'manual' | 'suggested' | (string & {});
+
+export interface Reminder {
+  id: string;
+  text: string;
+  dueAt: string;
+  status: ReminderStatus;
+  origin: ReminderOrigin;
+  sourceMemory: string | null;
+  createdAt: string;
+}
+
+/** GET /reminders */
+export interface ReminderList {
+  items: Reminder[];
+}
+
+export type ReminderScope = 'upcoming' | 'all' | 'suggested';
 
 /** Ingestion status of a raw memory ("pending" until the worker processes it). */
 export type IngestionStatus = 'pending' | 'processed' | 'failed' | (string & {});
@@ -70,7 +96,7 @@ export interface Citation {
 
 export type AskMode = 'recall' | 'reason' | 'clarify';
 
-export type AskStepKind = 'search' | 'clarify' | 'synthesize';
+export type AskStepKind = 'search' | 'clarify' | 'synthesize' | 'reminder';
 
 /** One visible step in the agent's reasoning trace. */
 export interface AskStep {
@@ -98,4 +124,13 @@ export type AskEvent =
       steps: AskStep[];
       clarifyOptions?: string[];
     }
+  | { type: 'captured'; memoryId: string; statement: string }
+  | { type: 'reminder_suggestion'; text: string; dueAt: string; sourceMemoryId?: string }
   | { type: 'error'; message: string };
+
+/** A transient reminder chip proposed during an Ask turn (not yet saved). */
+export interface ReminderSuggestion {
+  text: string;
+  dueAt: string;
+  sourceMemoryId?: string;
+}

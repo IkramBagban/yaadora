@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { streamAsk } from '../api/sse';
-import type { AskHistoryTurn, AskMode, AskStep, Citation } from '../api/types';
+import type {
+  AskHistoryTurn,
+  AskMode,
+  AskStep,
+  Citation,
+  ReminderSuggestion,
+} from '../api/types';
 import { newClientId } from '../lib/ids';
 
 export type ExchangeStatus = 'streaming' | 'done' | 'error';
@@ -19,6 +25,8 @@ export interface Exchange {
   clarifyOptions: string[];
   status: ExchangeStatus;
   error: string | null;
+  /** A reminder the server proposed for this turn (one-tap chip). Null if none. */
+  reminderSuggestion: ReminderSuggestion | null;
 }
 
 /** How many prior transcript messages to replay to the stateless server. */
@@ -37,6 +45,7 @@ function makeExchange(question: string): Exchange {
     clarifyOptions: [],
     status: 'streaming',
     error: null,
+    reminderSuggestion: null,
   };
 }
 
@@ -113,7 +122,17 @@ export function useAskSession() {
                 clarifyOptions: event.clarifyOptions ?? [],
                 liveStep: null,
               });
-            } else {
+            } else if (event.type === 'reminder_suggestion') {
+              patch(exchangeId, {
+                reminderSuggestion: {
+                  text: event.text,
+                  dueAt: event.dueAt,
+                  sourceMemoryId: event.sourceMemoryId,
+                },
+              });
+            } else if (event.type === 'captured') {
+              // A memory was quietly captured from this turn — nothing to render.
+            } else if (event.type === 'error') {
               patch(exchangeId, (e) => ({
                 status: 'error',
                 error: event.message,
@@ -171,6 +190,7 @@ export function useAskSession() {
         clarifyOptions: [],
         status: 'streaming',
         error: null,
+        reminderSuggestion: null,
       });
       void run(id, question, history);
     },
