@@ -1,12 +1,14 @@
 import {
   db,
   memories,
+  reminders,
   users,
   eq,
   and,
   sql,
 } from "@repo/db";
 import type { NewFact } from "@repo/db";
+import { createLogger } from "@repo/logger";
 import { embedTexts } from "../ai/models";
 import { extract, type Extraction } from "./extraction";
 import { linkEntities, type MentionInput, type EntityResolution } from "./linking";
@@ -27,10 +29,55 @@ import { reconcileAndInsertFact } from "./supersession";
  * marks status='failed' after the final attempt (raw text is never lost).
  */
 
+const log = createLogger("ingestion:pipeline");
+
 function parseDate(iso: string | null): Date | null {
   if (!iso) return null;
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Prospective intent → a SUGGESTED reminder (docs/specs/reminder-feature).
+ *
+ * The write path (POST /memories) is async, so we can't hand a chip back in the
+ * response like /ask does. Instead we persist the reminder as status="suggested"
+ * — the client surfaces it as a one-tap chip (GET /reminders?scope=suggested) to
+ * confirm (→ pending) or dismiss. Deduped per source memory so ingestion retries
+ * never create doubles. Best-effort: a failure here never fails the memory.
+ */
+async function maybeSuggestReminder(params: {
+  userId: string;
+  memoryId: string;
+  intent: Extraction["intent"];
+}): Promise<void> {
+  const { userId, memoryId, intent } = params;
+  if (!intent?.hasFutureAction) return;
+  const due = parseDate(intent.dueAt);
+  if (!due) return; // no concrete time to schedule against
+
+  try {
+    // One suggestion per source memory (retry-safe).
+    const existing = await db
+      .select({ id: reminders.id })
+      .from(reminders)
+      .where(and(eq(reminders.sourceMemory, memoryId), eq(reminders.userId, userId)))
+      .limit(1);
+    if (existing.length) return;
+
+    const text = (intent.text ?? "").trim() || "Follow up";
+    await db.insert(reminders).values({
+      userId,
+      text,
+      dueAt: due,
+      origin: "suggested",
+      status: "suggested",
+      sourceMemory: memoryId,
+    });
+    log.info("reminder suggested from capture", { userId, memoryId, dueAt: due });
+  } catch (err) {
+    log.warn("reminder suggestion failed (ignored)", err as Error);
+  }
 }
 
 /** Resolve a fact subject/object surface to an entity id, or null (literal or
@@ -139,9 +186,12 @@ export async function runIngestion(memoryId: string): Promise<void> {
     });
   }
 
-  // TODO(reminders — later wave): extraction.intent carries hasFutureAction +
-  // resolved dueAt; the server surfaces it as a one-tap reminder suggestion
-  // (spec 02 §6). Not persisted during Week 1–2.
+  // 6b. Prospective intent → a suggested reminder the user can confirm/dismiss.
+  await maybeSuggestReminder({
+    userId: memory.userId,
+    memoryId,
+    intent: extraction.intent,
+  });
 
   // 7. Finalize: set the memory embedding + resolved occurredAt + processed.
   await db

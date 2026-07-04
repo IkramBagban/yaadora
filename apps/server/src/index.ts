@@ -11,6 +11,7 @@ import { health } from "./routes/health";
 import { ask } from "./routes/ask";
 import {
   confirmReminder,
+  confirmSuggestedReminder,
   listReminders,
   cancelReminder,
 } from "./routes/reminders";
@@ -63,6 +64,9 @@ const server = Bun.serve({
     },
     "/reminders/confirm": {
       POST: (req) => confirmReminder(req),
+    },
+    "/reminders/:id/confirm": {
+      POST: (req) => confirmSuggestedReminder(req, req.params.id),
     },
     "/reminders/:id": {
       DELETE: (req) => cancelReminder(req, req.params.id),
