@@ -7,9 +7,12 @@ import {
 import { understandQuery, type UnderstoodQuery } from "./understanding";
 import { buildCandidates, rerankCandidates } from "./rerank";
 import { assembleContext, type Citation } from "./answer";
+import { createLogger } from "@repo/logger";
+
+const log = createLogger("retrieval");
 
 /**
- * The callable retrieval unit (spec 02 §3.1–3.3), extracted so the Ask agent
+ * The callable retrieval unit, extracted so the Ask agent
  * loop can invoke it as its `search_memories` tool. It reuses the SAME
  * query-understanding → hybrid-search → rerank → assemble machinery the old
  * single-pass Ask used — no SQL is duplicated here.
@@ -48,6 +51,21 @@ function snippet(text: string): string {
   return clean.length > SNIPPET_MAX ? `${clean.slice(0, SNIPPET_MAX)}…` : clean;
 }
 
+
+/** Trim + case-insensitively dedupe a list of query strings, preserving order. */
+function dedupeQueries(queries: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const q of queries) {
+    const trimmed = q.trim();
+    const key = trimmed.toLowerCase();
+    if (!trimmed || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 /**
  * Run one retrieval pass for `query` (optionally time-scoped by `timeframe`).
  * Returns compact hits for the model plus citations/context for grounding.
@@ -73,17 +91,41 @@ export async function retrieveMemories(params: {
     timezone,
   });
 
-  // §3.2 Hybrid candidate retrieval (hard time/entity predicates inside).
+  // §3.2 Hybrid candidate retrieval (hard time predicates inside; entities seed
+  // the graph channel). Always include the user's RAW query in the lexical set —
+  // the LLM rewrites can drop rare literal tokens (a project name like
+  // "querywise"), and the lexical channel is exactly what recalls those.
+  const lexicalQueries = dedupeQueries([query, ...understanding.searchQueries]);
   const pool = await hybridSearch({
     userId,
     embeddings: understanding.queryEmbeddings,
-    queries: understanding.searchQueries,
+    queries: lexicalQueries,
     entityIds: understanding.entityIds,
     timeRange: understanding.timeRange,
     currentOnly: !understanding.historical,
   });
 
   const candidates = buildCandidates(pool);
+
+  log.debug("Candidates Built", {
+    query,
+    timeframe: timeframe ?? null,
+    queryType: understanding.queryType,
+    historical: understanding.historical,
+    entityIds: understanding.entityIds,
+    searchQueries: understanding.searchQueries,
+    lexicalQueries,
+    timeRange: understanding.timeRange
+      ? {
+          from: understanding.timeRange.from.toISOString(),
+          to: understanding.timeRange.to.toISOString(),
+        }
+      : null,
+    poolMemories: pool.memories.length,
+    poolFacts: pool.facts.length,
+    candidates: candidates.length,
+  });
+
   if (!candidates.length) {
     return {
       hits: [],
@@ -97,6 +139,18 @@ export async function retrieveMemories(params: {
   // §3.3 Rerank to a precise top-k.
   const reranked = await rerankCandidates({ question: query, candidates });
   const topRelevance = reranked[0]?.relevance ?? 0;
+
+  log.debug("Candidates Reranked", {
+    query,
+    stage: "reranked",
+    reranked: reranked.length,
+    topRelevance,
+    topSnippets: reranked.slice(0, 3).map((c) => ({
+      kind: c.kind,
+      relevance: c.relevance,
+      text: snippet(c.text),
+    })),
+  });
 
   if (!reranked.length) {
     return {

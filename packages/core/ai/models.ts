@@ -1,153 +1,168 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
-import { openai } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI, google } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
-import { embed, embedMany, type EmbeddingModel } from "ai";
+import { openai } from "@ai-sdk/openai";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
+import {
+  embed,
+  embedMany,
+  type EmbeddingModel,
+  type LanguageModel,
+  wrapLanguageModel,
+} from "ai";
+import { createLoggerMiddleware } from "./telemetry";
+import { createLogger } from "@repo/logger";
 
-type LanguageModelV4 = ReturnType<typeof anthropic>;
-
-interface RetryConfig {
-  maxRetries: number;
-  baseDelayMs: number;
-  laps?: number;
-}
-
-async function withExponentialBackoff<T>(
-  fn: () => PromiseLike<T>,
-  { maxRetries, baseDelayMs }: { maxRetries: number; baseDelayMs: number },
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxRetries) {
-        const delay = baseDelayMs * 2 ** attempt;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-  throw lastError;
-}
-
-function customFallback(
-  models: LanguageModelV4[],
-  retryConfig: RetryConfig = { maxRetries: 2, baseDelayMs: 500, laps: 2 },
-): LanguageModelV4 {
-  const first = models[0];
-  if (!first) {
-    throw new Error("customFallback requires at least one model");
-  }
-  const { maxRetries, baseDelayMs, laps = 2 } = retryConfig;
-  
-  const fallbackModel = {
-    specificationVersion: 'v4' as const,
-    async doGenerate(options: Parameters<LanguageModelV4['doGenerate']>[0]) {
-      let lastError: unknown;
-      for (let lap = 0; lap < laps; lap++) {
-        for (const model of models) {
-          try {
-            return await withExponentialBackoff(
-              () => model.doGenerate(options),
-              { maxRetries, baseDelayMs },
-            );
-          } catch (error) {
-            lastError = error;
-            console.error(`[Fallback] Model ${model.modelId} failed on lap ${lap + 1}:`, error);
-          }
-        }
-      }
-      throw lastError;
-    },
-    async doStream(options: Parameters<LanguageModelV4['doStream']>[0]) {
-      let lastError: unknown;
-      for (let lap = 0; lap < laps; lap++) {
-        for (const model of models) {
-          try {
-            return await withExponentialBackoff(
-              () => model.doStream(options),
-              { maxRetries, baseDelayMs },
-            );
-          } catch (error) {
-            lastError = error;
-            console.error(`[Fallback] Model ${model.modelId} failed on lap ${lap + 1}:`, error);
-          }
-        }
-      }
-      throw lastError;
-    },
-  };
-
-  return new Proxy(first, {
-    get(target, prop, receiver) {
-      if (prop === 'doGenerate') {
-        return fallbackModel.doGenerate;
-      }
-      if (prop === 'doStream') {
-        return fallbackModel.doStream;
-      }
-      if (prop === 'specificationVersion') {
-        return 'v4';
-      }
-      return Reflect.get(target, prop, receiver);
-    }
-  }) as LanguageModelV4;
-}
+const log = createLogger("ai");
 
 /**
- * The AI-SDK provider layer (spec 02 §1).
+ * LLM provider is chosen dynamically from AI_PROVIDER ("groq" | "google").
+ * Three tiers:
+ *  - ingestion: fast/cheap model (high-volume, runs on every memory)
+ *  - reasoning: most capable model (Ask answer synthesis / decision mode)
+ *  - fast: cheap/instant model for mechanical structured-output calls that run
+ *    once or more PER ASK TURN (query understanding, rerank scoring). This tier
+ *    MUST support json_schema structured outputs — that's why groq routes it to
+ *    openai/gpt-oss-20b and NOT llama-3.1-8b-instant (which rejects json_schema).
  *
- * This is the ONLY module in the monorepo that imports provider SDKs. Everything
- * else (server, worker, the rest of @repo/core) talks to the exported models.
- * Swapping Claude <-> Gemini is a config change only (AI_PROVIDER env).
+ * API keys may be a single value OR a comma-separated list per provider, e.g.
+ *   GROQ_API_KEY="key_1,key_2,key_3"
+ * When more than one key is present each tier automatically falls back to the
+ * next key on a rate-limit / quota (429) error. With a single key there is no
+ * wrapping and behaviour is identical to before.
  *
- * Two tiers:
- *  - ingestion: cheap, high-volume (runs on every memory forever — keep near-free).
- *  - reasoning: Ask / decision mode; default to the most capable model.
+ * Embedding provider: openai (default) or google (EMBEDDING_PROVIDER=google).
  */
 
-const groq = createGroq({
-  baseURL: "https://api.groq.com/openai/v1", // Note: The user mentioned "openai/gpt-oss-120b", so maybe OpenRouter or standard groq. Assuming standard groq with createGroq.
-});
+type Tier = "ingestion" | "reasoning" | "fast";
 
-const REGISTRY = {
-  anthropic: {
-    ingestion: anthropic("claude-haiku-4-5-20251001"),
-    reasoning: anthropic("claude-opus-4-8"), // or claude-sonnet-4-6 for cost
+export const AI_PROVIDER = (process.env.AI_PROVIDER ?? "groq").toLowerCase() as
+  | "groq"
+  | "google";
+
+/** Per-provider, per-tier model ids. Only json_schema-capable models on `fast`. */
+const MODEL_IDS: Record<"groq" | "google", Record<Tier, string>> = {
+  groq: {
+    ingestion: "openai/gpt-oss-120b",
+    reasoning: "openai/gpt-oss-120b",
+    // gpt-oss-20b supports json_schema; llama-3.1-8b-instant does not.
+    fast: "openai/gpt-oss-20b",
   },
   google: {
-    ingestion: customFallback([
-      google("gemini-2.5-flash"),
-      groq("openai/gpt-oss-120b"),
-    ]),
-    reasoning: customFallback([
-      google("gemini-2.5-flash"),
-      groq("openai/gpt-oss-120b"),
-    ]),
+    // Pro models are quota-limited (limit 0) in this environment, so every tier
+    // routes to the working gemini-2.5-flash (it natively supports json_schema).
+    ingestion: "gemini-2.5-flash",
+    reasoning: "gemini-2.5-flash",
+    fast: "gemini-2.5-flash",
   },
-  groq: {
-    ingestion: groq("openai/gpt-oss-120b"),
-    reasoning: groq("openai/gpt-oss-120b"),
-  },
-} as const;
+};
 
-const PROVIDER = (process.env.AI_PROVIDER ?? "anthropic") as keyof typeof REGISTRY;
+/** Split a comma-separated key list into trimmed, non-empty keys. */
+function parseKeys(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+}
 
-export const ingestionModel = REGISTRY[PROVIDER].ingestion;
-export const reasoningModel = REGISTRY[PROVIDER].reasoning;
+/** True for rate-limit / quota-exhausted errors worth retrying on another key. */
+function isRateLimitError(err: unknown): boolean {
+  const e = err as { statusCode?: number; status?: number; message?: string };
+  if (e?.statusCode === 429 || e?.status === 429) return true;
+  const msg = String(e?.message ?? err).toLowerCase();
+  return (
+    msg.includes("429") ||
+    msg.includes("rate limit") ||
+    msg.includes("rate-limit") ||
+    msg.includes("quota") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("too many requests")
+  );
+}
 
 /**
- * Embeddings need a dedicated provider (Anthropic ships none). Dimension is
- * FIXED at 1536 by the DB column, so both providers are pinned to 1536:
- *  - openai: text-embedding-3-small (natively 1536-d)
- *  - google: gemini-embedding-001 (default 3072-d, reduced to 1536 via
- *    Matryoshka `outputDimensionality`; passed at call time below)
- *
- * Embeddings from different models are NOT comparable — switching
- * EMBEDDING_PROVIDER means re-embedding everything (spec 02 §1, CONTEXT.md §4).
- * Defaults to openai unless EMBEDDING_PROVIDER=google.
+ * Wrap an array of equivalent models (same model id, different API keys) so that
+ * a 429 on one transparently retries the request on the next. Non-rate-limit
+ * errors propagate immediately. A single model is returned untouched.
  */
+function withKeyFallback(models: LanguageModelV4[]): LanguageModelV4 {
+  if (models.length <= 1) return models[0]!;
+  const primary = models[0]!;
+  return {
+    ...primary,
+    async doGenerate(options) {
+      let lastErr: unknown;
+      for (const model of models) {
+        try {
+          return await model.doGenerate(options);
+        } catch (err) {
+          if (!isRateLimitError(err)) throw err;
+          lastErr = err;
+          log.warn("Model key rate-limited, falling back to next key", {
+            modelId: model.modelId,
+          });
+        }
+      }
+      throw lastErr;
+    },
+    async doStream(options) {
+      let lastErr: unknown;
+      for (const model of models) {
+        try {
+          return await model.doStream(options);
+        } catch (err) {
+          if (!isRateLimitError(err)) throw err;
+          lastErr = err;
+          log.warn("Model key rate-limited, falling back to next key", {
+            modelId: model.modelId,
+          });
+        }
+      }
+      throw lastErr;
+    },
+  };
+}
+
+/** Build a factory that turns an API key into a model for the active provider. */
+function makeModelFactory(
+  provider: "groq" | "google",
+  modelId: string,
+): (apiKey?: string) => LanguageModelV4 {
+  if (provider === "google") {
+    return (apiKey) =>
+      createGoogleGenerativeAI({ apiKey })(modelId) as LanguageModelV4;
+  }
+  return (apiKey) =>
+    createGroq({ apiKey, baseURL: "https://api.groq.com/openai/v1" })(
+      modelId,
+    ) as LanguageModelV4;
+}
+
+/** Resolve the model (with logging + optional key fallback) for a given tier. */
+function buildTierModel(tier: Tier): LanguageModel {
+  const provider = AI_PROVIDER in MODEL_IDS ? AI_PROVIDER : "groq";
+  const modelId = MODEL_IDS[provider][tier];
+  const keyEnv =
+    provider === "google"
+      ? process.env.GOOGLE_GENERATIVE_AI_API_KEY
+      : process.env.GROQ_API_KEY;
+
+  const keys = parseKeys(keyEnv);
+  const factory = makeModelFactory(provider, modelId);
+
+  // No key configured → let the SDK read its own default env var (single key).
+  const models =
+    keys.length > 0 ? keys.map((key) => factory(key)) : [factory(undefined)];
+
+  return wrapLanguageModel({
+    model: withKeyFallback(models),
+    middleware: createLoggerMiddleware(`${provider}:${modelId}`),
+  });
+}
+
+export const ingestionModel = buildTierModel("ingestion");
+export const reasoningModel = buildTierModel("reasoning");
+export const fastModel = buildTierModel("fast");
+
 export const EMBEDDING_PROVIDER = (process.env.EMBEDDING_PROVIDER ??
   "openai") as "openai" | "google";
 
@@ -158,9 +173,6 @@ export const embeddingModel: EmbeddingModel =
     ? google.textEmbedding("gemini-embedding-001")
     : openai.embedding("text-embedding-3-small");
 
-// Per-call provider options. Gemini needs the dimensionality + a task type;
-// SEMANTIC_SIMILARITY works symmetrically for both stored docs and queries so a
-// single shared column stays valid. OpenAI needs nothing here.
 const embeddingProviderOptions =
   EMBEDDING_PROVIDER === "google"
     ? {
@@ -171,27 +183,34 @@ const embeddingProviderOptions =
       }
     : undefined;
 
-/** Embed one string. Returns `{ embedding }` (same shape as the AI SDK). */
 export async function embedText(value: string): Promise<{ embedding: number[] }> {
+  const startTime = Date.now();
+  log.debug("Embedding Request", { model: EMBEDDING_PROVIDER, count: 1 });
+  
   const { embedding } = await embed({
     model: embeddingModel,
     value,
     providerOptions: embeddingProviderOptions,
   });
+  
+  log.debug("Embedding Response", { latencyMs: Date.now() - startTime });
   return { embedding };
 }
 
-/** Embed many strings in one call. Returns `{ embeddings }`. */
 export async function embedTexts(
   values: string[],
 ): Promise<{ embeddings: number[][] }> {
   if (values.length === 0) return { embeddings: [] };
+  
+  const startTime = Date.now();
+  log.debug("Embedding Request", { model: EMBEDDING_PROVIDER, count: values.length });
+  
   const { embeddings } = await embedMany({
     model: embeddingModel,
     values,
     providerOptions: embeddingProviderOptions,
   });
+  
+  log.debug("Embedding Response", { latencyMs: Date.now() - startTime });
   return { embeddings };
 }
-
-export const AI_PROVIDER = PROVIDER;

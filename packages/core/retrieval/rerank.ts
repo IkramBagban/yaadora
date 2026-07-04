@@ -5,7 +5,7 @@ import type {
   RetrievedFact,
   RetrievedMemory,
 } from "@repo/db";
-import { reasoningModel } from "../ai/models";
+import { fastModel } from "../ai/models";
 
 /**
  * Rerank & assemble (spec 02 §3.3).
@@ -107,7 +107,7 @@ export async function rerankCandidates(params: {
     .join("\n");
 
   const { object } = await generateObject({
-    model: reasoningModel,
+    model: fastModel,
     schema: RerankSchema,
     system:
       "You are the reranking stage of a personal memory system. Score how " +

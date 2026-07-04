@@ -113,16 +113,17 @@ async function touchEntity(
   surface: string,
   seenAt: Date | null,
 ): Promise<void> {
+  const seenAtStr = seenAt ? seenAt.toISOString() : null;
   // Bump mention_count, advance last_seen, extend aliases with the new surface.
   await db
     .update(entities)
     .set({
       mentionCount: sql`${entities.mentionCount} + 1`,
-      lastSeen: sql`GREATEST(${entities.lastSeen}, ${seenAt}::timestamptz)`,
+      lastSeen: sql`GREATEST(${entities.lastSeen}, ${seenAtStr}::timestamptz)`,
       aliases: sql`(
         SELECT array_agg(DISTINCT x) FROM unnest(${entities.aliases} || ARRAY[${surface}]::text[]) x
       )`,
-      firstSeen: sql`LEAST(${entities.firstSeen}, ${seenAt}::timestamptz)`,
+      firstSeen: sql`LEAST(${entities.firstSeen}, ${seenAtStr}::timestamptz)`,
     })
     .where(eq(entities.id, entityId));
 }

@@ -25,7 +25,13 @@ export interface AssembledContext {
   citations: Citation[];
 }
 
-/** The honest refusal when retrieval finds nothing to stand on (spec 02 §3.4). */
+/**
+ * Last-resort fallback text when retrieval finds nothing to stand on and the
+ * model streams back nothing usable (spec 02 §3.4). This is NOT a line the model
+ * is told to recite — it exists only so the code always has something honest to
+ * emit if the stream comes back empty. The model phrases empty results in its
+ * own natural, varied words.
+ */
 export const REFUSAL_TEXT = "I don't have a memory about that.";
 
 const SNIPPET_MAX = 200;
@@ -97,7 +103,7 @@ const SYSTEM_PROMPT = `You answer questions using ONLY the user's own retrieved 
 Absolute rules:
 - Ground EVERY claim in the provided context. Never state anything not supported by it.
 - Cite the source memory inline using its tag, e.g. "(memory M1)". Cite each claim.
-- If the context does not contain the answer, reply EXACTLY: "${REFUSAL_TEXT}"
+- If the context does not contain the answer, say so honestly in your own words (e.g. "I don't have anything on that in your memory"), varying the phrasing naturally. Never invent an answer to fill the gap.
 - Never invent memories, dates, people, or details. Do not use outside knowledge.
 - Be concise and direct. Speak to the user in the second person.`;
 

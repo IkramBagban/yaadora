@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { findEntityCandidates, type TimeRange } from "@repo/db";
-import { reasoningModel, embedTexts } from "../ai/models";
+import { fastModel, embedTexts } from "../ai/models";
 
 /**
  * Query understanding (spec 02 §3.1) — the first reasoning-tier call of Ask.
@@ -112,7 +112,7 @@ export async function understandQuery(params: {
   const { userId, question, now, timezone } = params;
 
   const { object } = await generateObject({
-    model: reasoningModel,
+    model: fastModel,
     schema: QueryUnderstandingSchema,
     system: SYSTEM_PROMPT,
     prompt: `Current date/time: ${formatNow(now, timezone)}
