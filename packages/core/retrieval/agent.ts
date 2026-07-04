@@ -1,6 +1,6 @@
 import { streamText, tool, stepCountIs, hasToolCall, type ModelMessage } from "ai";
 import { z } from "zod";
-import { db, users, eq } from "@repo/db";
+import { db, users, reminders, eq } from "@repo/db";
 import { reasoningModel } from "../ai/models";
 import { retrieveMemories } from "./search";
 import { REFUSAL_TEXT, type Citation } from "./answer";
@@ -27,7 +27,7 @@ export interface AskHistoryTurn {
 
 /** A single visible step in the agent's trace (emitted live + summarised). */
 export interface AskStep {
-  kind: "search" | "clarify" | "synthesize";
+  kind: "search" | "clarify" | "synthesize" | "reminder";
   label: string;
   query?: string;
   count?: number;
@@ -92,6 +92,10 @@ Answering — talk like a friend who remembers, not a database:
 - Ground every claim about the user's life in what search_memories actually returned. Only reference the memory layer in the NEGATIVE case: when you searched and found nothing, say so plainly and vary the wording naturally — "nothing about that saved yet", "I don't have anything on that", "you haven't told me about that." Never invent or guess a memory to fill a gap.
 - For pure conversational turns (no search performed), just respond naturally — the groundedness rule only applies to memory-derived claims, not to a greeting or to explaining your own earlier wording.
 - Do NOT add citation tags or "(memory ...)" — sources are shown to the user separately.
+
+Setting reminders:
+- You have a set_reminder tool. Use it ONLY when the user explicitly asks to be reminded or to set/schedule a reminder ("remind me to …", "set a reminder for …"). Resolve the time to an absolute moment from the current date/time above, call set_reminder(text, dueAt), then confirm in one short line (e.g. "Done — I'll remind you Sunday at 3 PM."). If they ask for a reminder but give no usable time, ask for the time instead of guessing.
+- Do NOT call set_reminder for things the user only mentions in passing ("I have a meeting Sunday") — those are handled separately as a suggestion. Only act when they actually ask you to set one.
 
 Asking back (rare — prefer to infer):
 - First resolve follow-ups from the conversation so far. A plain topic follow-up like "any about travelling?" or "what about work?" right after a broader question is NOT ambiguous — treat it as a fresh search on that topic and answer it. Don't ask the user what they mean.
@@ -201,6 +205,43 @@ export async function answerQuestion(params: {
             text: h.snippet,
           })),
         };
+      },
+    }),
+    set_reminder: tool({
+      description:
+        'Create a reminder when the user EXPLICITLY asks to be reminded or to set/schedule one (e.g. "remind me to call mom tomorrow at 6pm", "set a reminder for the dentist Monday 9am"). Resolve the time to an absolute ISO 8601 instant using the current date/time in the system prompt. Do NOT use this for things the user merely mentions in passing — only when they actually ask you to set a reminder.',
+      inputSchema: z.object({
+        text: z.string().describe('short imperative, e.g. "Call mom"'),
+        dueAt: z
+          .string()
+          .describe("absolute ISO 8601 datetime for when to remind"),
+      }),
+      execute: async ({ text, dueAt }) => {
+        const due = new Date(dueAt);
+        if (Number.isNaN(due.getTime())) {
+          return { ok: false, error: "Could not resolve a valid time." };
+        }
+        const [created] = await db
+          .insert(reminders)
+          .values({
+            userId,
+            text: text.trim(),
+            dueAt: due,
+            origin: "manual",
+            status: "pending",
+          })
+          .returning({ id: reminders.id, dueAt: reminders.dueAt });
+
+        const step: AskStep = {
+          kind: "reminder",
+          label: `Reminder set: ${text.trim()}`,
+        };
+        steps.push(step);
+        onStep?.(step);
+
+        return created
+          ? { ok: true, reminderId: created.id, dueAt: created.dueAt }
+          : { ok: false, error: "Failed to save the reminder." };
       },
     }),
     clarify: tool({

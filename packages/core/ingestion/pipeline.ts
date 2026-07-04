@@ -46,15 +46,39 @@ function parseDate(iso: string | null): Date | null {
  * confirm (→ pending) or dismiss. Deduped per source memory so ingestion retries
  * never create doubles. Best-effort: a failure here never fails the memory.
  */
+function shortTitle(text: string): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length > 100 ? `${oneLine.slice(0, 97)}…` : oneLine;
+}
+
 async function maybeSuggestReminder(params: {
   userId: string;
   memoryId: string;
   intent: Extraction["intent"];
+  occurredAt: Date | null;
+  memoryText: string;
+  now: Date;
 }): Promise<void> {
-  const { userId, memoryId, intent } = params;
-  if (!intent?.hasFutureAction) return;
-  const due = parseDate(intent.dueAt);
-  if (!due) return; // no concrete time to schedule against
+  const { userId, memoryId, intent, occurredAt, memoryText, now } = params;
+
+  // Two triggers, either one is enough:
+  //  1. An explicit future ACTION ("call the bank Friday") from intent.
+  //  2. A prospective EVENT ("meeting on Sunday", "flight next week") whose
+  //     resolved occurredAt is in the future — extraction often fills occurredAt
+  //     without setting intent for passive events, so we must catch these too.
+  let due: Date | null = null;
+  let text: string | null = null;
+
+  if (intent?.hasFutureAction) {
+    due = parseDate(intent.dueAt);
+    text = (intent.text ?? "").trim() || null;
+  }
+  if (!due && occurredAt && occurredAt.getTime() > now.getTime()) {
+    due = occurredAt;
+    text = text ?? shortTitle(memoryText);
+  }
+
+  if (!due || due.getTime() <= now.getTime()) return; // nothing future to schedule
 
   try {
     // One suggestion per source memory (retry-safe).
@@ -65,10 +89,9 @@ async function maybeSuggestReminder(params: {
       .limit(1);
     if (existing.length) return;
 
-    const text = (intent.text ?? "").trim() || "Follow up";
     await db.insert(reminders).values({
       userId,
-      text,
+      text: text?.trim() || "Follow up",
       dueAt: due,
       origin: "suggested",
       status: "suggested",
@@ -186,11 +209,15 @@ export async function runIngestion(memoryId: string): Promise<void> {
     });
   }
 
-  // 6b. Prospective intent → a suggested reminder the user can confirm/dismiss.
+  // 6b. Prospective intent OR a future-dated event → a suggested reminder the
+  //     user can confirm/dismiss.
   await maybeSuggestReminder({
     userId: memory.userId,
     memoryId,
     intent: extraction.intent,
+    occurredAt,
+    memoryText: memory.rawText,
+    now: new Date(),
   });
 
   // 7. Finalize: set the memory embedding + resolved occurredAt + processed.
