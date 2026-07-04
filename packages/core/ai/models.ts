@@ -87,39 +87,42 @@ function isRateLimitError(err: unknown): boolean {
 function withKeyFallback(models: LanguageModelV4[]): LanguageModelV4 {
   if (models.length <= 1) return models[0]!;
   const primary = models[0]!;
-  return {
-    ...primary,
-    async doGenerate(options) {
-      let lastErr: unknown;
-      for (const model of models) {
-        try {
-          return await model.doGenerate(options);
-        } catch (err) {
-          if (!isRateLimitError(err)) throw err;
-          lastErr = err;
-          log.warn("Model key rate-limited, falling back to next key", {
-            modelId: model.modelId,
-          });
-        }
+
+  // Try each key in turn; retry only on rate-limit/quota errors.
+  const attempt = async <T>(
+    call: (model: LanguageModelV4) => PromiseLike<T>,
+  ): Promise<T> => {
+    let lastErr: unknown;
+    for (const model of models) {
+      try {
+        return await call(model);
+      } catch (err) {
+        if (!isRateLimitError(err)) throw err;
+        lastErr = err;
+        log.warn("Model key rate-limited, falling back to next key", {
+          modelId: model.modelId,
+        });
       }
-      throw lastErr;
-    },
-    async doStream(options) {
-      let lastErr: unknown;
-      for (const model of models) {
-        try {
-          return await model.doStream(options);
-        } catch (err) {
-          if (!isRateLimitError(err)) throw err;
-          lastErr = err;
-          log.warn("Model key rate-limited, falling back to next key", {
-            modelId: model.modelId,
-          });
-        }
-      }
-      throw lastErr;
-    },
+    }
+    throw lastErr;
   };
+
+  // Delegate every property (provider/modelId/supportedUrls are prototype
+  // GETTERS — spreading would drop them and leave provider undefined) to the
+  // primary model, overriding only the two call methods with key fallback.
+  return new Proxy(primary, {
+    get(target, prop, receiver) {
+      if (prop === "doGenerate") {
+        return (options: Parameters<LanguageModelV4["doGenerate"]>[0]) =>
+          attempt((m) => m.doGenerate(options));
+      }
+      if (prop === "doStream") {
+        return (options: Parameters<LanguageModelV4["doStream"]>[0]) =>
+          attempt((m) => m.doStream(options));
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
 }
 
 /** Build a factory that turns an API key into a model for the active provider. */
