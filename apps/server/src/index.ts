@@ -9,6 +9,11 @@ import {
 } from "./routes/memories";
 import { health } from "./routes/health";
 import { ask } from "./routes/ask";
+import {
+  confirmReminder,
+  listReminders,
+  cancelReminder,
+} from "./routes/reminders";
 
 // Declare this process's log target FIRST — every log line (including those
 // emitted deep inside @repo/core) is written to logs/server.log in development.
@@ -52,6 +57,15 @@ const server = Bun.serve({
     },
     "/ask": {
       POST: (req) => ask(req),
+    },
+    "/reminders": {
+      GET: (req) => listReminders(req),
+    },
+    "/reminders/confirm": {
+      POST: (req) => confirmReminder(req),
+    },
+    "/reminders/:id": {
+      DELETE: (req) => cancelReminder(req, req.params.id),
     },
   },
   // Unmatched routes.

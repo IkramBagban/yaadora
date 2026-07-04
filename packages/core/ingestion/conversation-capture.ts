@@ -43,6 +43,13 @@ export const CaptureGateSchema = z.object({
   // resolves pronouns/ellipsis against the recent turns so the memory stands on
   // its own later. null when worthRemembering is false.
   statement: z.string().nullable(),
+  // If the turn implies a concrete, time-bound future action ("call the bank
+  // Friday", "flight to Tokyo next week"), propose a reminder the user can save
+  // in one tap. text = short imperative; dueAt = absolute ISO 8601 resolved
+  // against the current datetime. null when there's no actionable time.
+  suggestedReminder: z
+    .object({ text: z.string(), dueAt: z.string() })
+    .nullable(),
 });
 
 export type CaptureGate = z.infer<typeof CaptureGateSchema>;
@@ -66,6 +73,8 @@ DO NOT capture (worthRemembering = false, category "none") when the message is:
 
 When worthRemembering is true, write "statement": a single, self-contained sentence in the third person about the user that captures the durable info, with pronouns and context resolved using the recent turns (e.g. "The user is flying to Tokyo the week of ..."). Keep it faithful — never invent details. When false, set statement to null.
 
+REMINDER: separately, if the message implies a concrete future action or commitment WITH a time you can pin down ("call the bank Friday", "flight to Tokyo next Tuesday", "ship the beta at 5pm"), set "suggestedReminder" to { text: a short imperative like "Call the bank", dueAt: the absolute ISO 8601 instant resolved from the current datetime given below }. Only when there is a genuine, time-bound action — NOT for vague someday wishes or past events. Otherwise set suggestedReminder to null. (suggestedReminder and worthRemembering are independent — a future plan is usually both.)
+
 Prefer NOT to capture when unsure — a missed capture is cheaper than noise.`;
 
 /** Trim recent turns into a compact context block for pronoun/ellipsis resolution. */
@@ -79,12 +88,29 @@ function formatContext(
     .join("\n");
 }
 
+/** Validate a proposed reminder: real, parseable time that isn't already stale.
+ * Returns a normalised {text,dueAt} or undefined (drop the suggestion). */
+function validateReminder(
+  s: CaptureGate["suggestedReminder"],
+  now: Date,
+): { text: string; dueAt: string } | undefined {
+  if (!s?.text?.trim() || !s.dueAt) return undefined;
+  const d = new Date(s.dueAt);
+  if (Number.isNaN(d.getTime())) return undefined;
+  // Drop clearly-stale times (>1h in the past) — usually a mis-resolution.
+  if (d.getTime() < now.getTime() - 3_600_000) return undefined;
+  return { text: s.text.trim(), dueAt: d.toISOString() };
+}
+
 export interface CaptureResult {
   captured: boolean;
   memoryId?: string;
   statement?: string;
   category?: (typeof GATE_CATEGORIES)[number];
   reason?: string;
+  /** A proposed reminder the client shows as a one-tap chip. Transient until the
+   * user confirms it (POST /reminders/confirm); dismissing costs nothing. */
+  suggestedReminder?: { text: string; dueAt: string; sourceMemoryId?: string };
 }
 
 /**
@@ -99,6 +125,7 @@ export async function captureFromConversation(params: {
   now?: Date;
 }): Promise<CaptureResult> {
   const { userId, userText, history = [] } = params;
+  const now = params.now ?? new Date();
 
   const text = userText.trim();
   // A one-word turn almost never carries a durable fact; skip the LLM entirely.
@@ -109,7 +136,9 @@ export async function captureFromConversation(params: {
       model: fastModel,
       schema: CaptureGateSchema,
       system: SYSTEM_PROMPT,
-      prompt: `Recent turns (context only — do NOT capture from these):
+      prompt: `Current datetime (resolve any relative times against this): ${now.toISOString()} (UTC)
+
+Recent turns (context only — do NOT capture from these):
 ${formatContext(history)}
 
 User's LATEST message (decide about THIS):
@@ -118,13 +147,22 @@ ${text}
 """`,
     });
 
+    // A reminder can be proposed independently of whether we store a memory.
+    const reminder = validateReminder(gate.suggestedReminder, now);
+
     if (!gate.worthRemembering || !gate.statement?.trim()) {
       log.debug("capture gate: skip", {
         userId,
         category: gate.category,
         reason: gate.reason,
+        reminder: Boolean(reminder),
       });
-      return { captured: false, category: gate.category, reason: gate.reason };
+      return {
+        captured: false,
+        category: gate.category,
+        reason: gate.reason,
+        ...(reminder ? { suggestedReminder: reminder } : {}),
+      };
     }
 
     // Keeper → store the standalone statement as the episodic memory and let the
@@ -163,6 +201,9 @@ ${text}
       statement: gate.statement.trim(),
       category: gate.category,
       reason: gate.reason,
+      ...(reminder
+        ? { suggestedReminder: { ...reminder, sourceMemoryId: created.id } }
+        : {}),
     };
   } catch (err) {
     // Capture must NEVER break the ask flow.

@@ -24,6 +24,7 @@ const log = createLogger("server:ask");
  *   { type: "token", text }
  *   { type: "done", citations, confidence, mode, steps, clarifyOptions? }
  *   { type: "captured", memoryId, statement }   // when the turn was worth remembering
+ *   { type: "reminder_suggestion", text, dueAt, sourceMemoryId? }  // one-tap chip
  *   { type: "error", message }
  *
  * Conversational capture (docs/architecture/02) runs AFTER the answer has fully
@@ -133,6 +134,11 @@ export async function ask(req: Request): Promise<Response> {
             memoryId: capture.memoryId,
             statement: capture.statement,
           });
+        }
+        // A time-bound future action → a one-tap reminder chip. Transient until
+        // the user confirms it (POST /reminders/confirm); dismissing is free.
+        if (capture.suggestedReminder) {
+          send({ type: "reminder_suggestion", ...capture.suggestedReminder });
         }
       } catch (err) {
         log.error("ask failed", err as Error);
