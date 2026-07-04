@@ -5,8 +5,13 @@ import type { Reminder } from '../api/types';
 import {
   cancelScheduled,
   ensureNotificationPermission,
+  scheduleReminder,
   syncScheduled,
 } from '../lib/notifications';
+
+function sortByDue(items: Reminder[]): Reminder[] {
+  return [...items].sort((a, b) => +new Date(a.dueAt) - +new Date(b.dueAt));
+}
 
 export interface RemindersState {
   upcoming: Reminder[];
@@ -84,6 +89,31 @@ export function useReminders() {
 
   const refresh = useCallback(() => load('refresh'), [load]);
 
+  /** Create a reminder manually; it appears immediately and gets scheduled. */
+  const create = useCallback(async (text: string, dueAt: string) => {
+    const created = await api.createReminder({ text, dueAt });
+    if (!mounted.current) return created;
+    setState((s) => ({ ...s, upcoming: sortByDue([...s.upcoming, created]) }));
+    void ensureNotificationPermission().then(() => scheduleReminder(created));
+    return created;
+  }, []);
+
+  /** Edit a reminder's text/time; reschedules its notification. */
+  const update = useCallback(
+    async (id: string, patch: { text?: string; dueAt?: string }) => {
+      const saved = await api.updateReminder(id, patch);
+      if (!mounted.current) return saved;
+      setState((s) => {
+        const upcoming = sortByDue(s.upcoming.map((r) => (r.id === id ? saved : r)));
+        // Time may have changed — drop the old schedule then re-sync from scratch.
+        void cancelScheduled(id).then(() => syncScheduled(upcoming));
+        return { ...s, upcoming };
+      });
+      return saved;
+    },
+    [],
+  );
+
   /** Accept a suggestion → it becomes a pending reminder and gets scheduled. */
   const accept = useCallback(async (id: string) => {
     const promoted = await api.acceptSuggestion(id);
@@ -129,5 +159,14 @@ export function useReminders() {
     }
   }, []);
 
-  return { ...state, refresh, accept, dismissSuggestion, complete, cancel };
+  return {
+    ...state,
+    refresh,
+    create,
+    update,
+    accept,
+    dismissSuggestion,
+    complete,
+    cancel,
+  };
 }

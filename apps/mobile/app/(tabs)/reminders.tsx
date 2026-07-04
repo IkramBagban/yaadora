@@ -13,6 +13,10 @@ import type { Reminder } from '../../src/api/types';
 import { AppText } from '../../src/components/AppText';
 import { EmptyState } from '../../src/components/EmptyState';
 import { PressableScale } from '../../src/components/PressableScale';
+import {
+  ReminderComposer,
+  type ComposerTarget,
+} from '../../src/components/ReminderComposer';
 import { useReminders } from '../../src/reminders/useReminders';
 import {
   ensureNotificationPermission,
@@ -49,6 +53,8 @@ export default function RemindersScreen() {
     error,
     refreshing,
     refresh,
+    create,
+    update,
     accept,
     dismissSuggestion,
     complete,
@@ -56,6 +62,19 @@ export default function RemindersScreen() {
   } = useReminders();
 
   const [notifsOn, setNotifsOn] = useState(true);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<ComposerTarget | null>(null);
+
+  const openCreate = () => {
+    void Haptics.selectionAsync();
+    setEditTarget(null);
+    setComposerOpen(true);
+  };
+  const openEdit = (r: Reminder) => {
+    void Haptics.selectionAsync();
+    setEditTarget({ id: r.id, text: r.text, dueAt: r.dueAt });
+    setComposerOpen(true);
+  };
   useEffect(() => {
     void hasNotificationPermission().then(setNotifsOn);
   }, [upcoming.length, suggested.length]);
@@ -90,12 +109,21 @@ export default function RemindersScreen() {
         }
       >
         <View style={styles.header}>
-          <AppText variant="display">Reminders</AppText>
-          {upcoming.length > 0 ? (
-            <AppText variant="sub" tone="ink3">
-              {upcoming.length} coming up
-            </AppText>
-          ) : null}
+          <View style={styles.headerText}>
+            <AppText variant="display">Reminders</AppText>
+            {upcoming.length > 0 ? (
+              <AppText variant="sub" tone="ink3">
+                {upcoming.length} coming up
+              </AppText>
+            ) : null}
+          </View>
+          <PressableScale
+            onPress={openCreate}
+            accessibilityLabel="New reminder"
+            style={[styles.addFab, { backgroundColor: colors.accent }]}
+          >
+            <Feather name="plus" size={20} color={colors.onAccent} />
+          </PressableScale>
         </View>
 
         {!notifsOn ? (
@@ -161,6 +189,7 @@ export default function RemindersScreen() {
                 reminder={r}
                 index={i}
                 overdue={group.label === 'Overdue'}
+                onEdit={() => openEdit(r)}
                 onComplete={() => {
                   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                   void complete(r.id);
@@ -188,6 +217,14 @@ export default function RemindersScreen() {
           </AppText>
         ) : null}
       </ScrollView>
+
+      <ReminderComposer
+        visible={composerOpen}
+        target={editTarget}
+        onClose={() => setComposerOpen(false)}
+        onCreate={create}
+        onUpdate={update}
+      />
     </View>
   );
 }
@@ -197,12 +234,14 @@ function ReminderCard({
   reminder,
   index,
   overdue,
+  onEdit,
   onComplete,
   onCancel,
 }: {
   reminder: Reminder;
   index: number;
   overdue: boolean;
+  onEdit: () => void;
   onComplete: () => void;
   onCancel: () => void;
 }) {
@@ -220,7 +259,11 @@ function ReminderCard({
         accessibilityLabel="Mark done"
         style={[styles.check, { borderColor: colors.ink3 }]}
       />
-      <View style={styles.cardBody}>
+      <PressableScale
+        onPress={onEdit}
+        accessibilityLabel="Edit reminder"
+        style={styles.cardBody}
+      >
         <AppText variant="serifBody" tone="ink" numberOfLines={3}>
           {reminder.text}
         </AppText>
@@ -233,7 +276,7 @@ function ReminderCard({
             · {dueCountdown(reminder.dueAt)}
           </AppText>
         </View>
-      </View>
+      </PressableScale>
       <PressableScale
         onPress={onCancel}
         hitSlop={10}
@@ -310,7 +353,19 @@ function SuggestedCard({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: { paddingHorizontal: space.xl, gap: space.xl },
-  header: { gap: space.xs },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  headerText: { gap: space.xs },
+  addFab: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',

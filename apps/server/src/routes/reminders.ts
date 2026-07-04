@@ -160,6 +160,51 @@ export async function confirmSuggestedReminder(
   return json(updated);
 }
 
+const UpdateBody = z
+  .object({
+    text: z.string().min(1).max(500).optional(),
+    dueAt: z.string().datetime().optional(),
+    status: z.enum(["pending", "done", "dismissed"]).optional(),
+  })
+  .refine((d) => d.text !== undefined || d.dueAt !== undefined || d.status !== undefined, {
+    message: "Provide at least one of text, dueAt, status.",
+  });
+
+/** PATCH /reminders/:id — edit an existing reminder (text / time / status). */
+export async function updateReminder(req: Request, id: string): Promise<Response> {
+  const userId = authenticate(req);
+  if (!userId) return unauthorized();
+
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return badRequest("Body must be valid JSON.");
+  }
+  const parsed = UpdateBody.safeParse(raw);
+  if (!parsed.success) {
+    return badRequest(parsed.error.issues.map((i) => i.message).join("; "));
+  }
+
+  const set: Partial<{ text: string; dueAt: Date; status: string }> = {};
+  if (parsed.data.text !== undefined) set.text = parsed.data.text;
+  if (parsed.data.dueAt !== undefined) set.dueAt = new Date(parsed.data.dueAt);
+  if (parsed.data.status !== undefined) set.status = parsed.data.status;
+
+  const [updated] = await db
+    .update(reminders)
+    .set(set)
+    .where(and(eq(reminders.id, id), eq(reminders.userId, userId)))
+    .returning(reminderCols);
+
+  if (!updated) {
+    log.debug("reminder update: not found", { userId, reminderId: id });
+    return notFound("Reminder not found.");
+  }
+  log.info("reminder updated", { userId, reminderId: id });
+  return json(updated);
+}
+
 /** POST /reminders/:id/complete — mark a reminder done. Owner-scoped. */
 export async function completeReminder(req: Request, id: string): Promise<Response> {
   const userId = authenticate(req);
