@@ -11,8 +11,11 @@ import {
   lt,
   desc,
 } from "@repo/db";
+import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
 import { json, badRequest, notFound, unauthorized, serverError } from "../http";
+
+const log = createLogger("server:memories");
 
 /**
  * Memory routes (spec 03 §1.1). The capture path is sacred: POST does exactly
@@ -80,7 +83,8 @@ function idemKey(userId: string, clientId: string): string {
 async function idemLookup(userId: string, clientId: string): Promise<string | null> {
   try {
     return await Bun.redis.get(idemKey(userId, clientId));
-  } catch {
+  } catch (err) {
+    log.warn("idempotency lookup failed (continuing)", err);
     return null;
   }
 }
@@ -94,8 +98,8 @@ async function idemStore(
     const key = idemKey(userId, clientId);
     await Bun.redis.set(key, memoryId);
     await Bun.redis.expire(key, 60 * 60 * 24 * 7); // 7 days
-  } catch {
-    // best-effort only
+  } catch (err) {
+    log.warn("idempotency store failed (best-effort)", err);
   }
 }
 
@@ -110,9 +114,11 @@ export async function createMemory(req: Request): Promise<Response> {
   } catch {
     return badRequest("Body must be valid JSON.");
   }
-  const parsed = CreateMemoryBody.safeParse(raw);
+  const parsed = CreateMemoryBody.safeParse(raw); 
   if (!parsed.success) {
-    return badRequest(parsed.error.issues.map((i) => i.message).join("; "));
+    const message = parsed.error.issues.map((i) => i.message).join("; ");
+    log.debug("create rejected: invalid body", { message });
+    return badRequest(message);
   }
   const body = parsed.data;
 
@@ -129,7 +135,14 @@ export async function createMemory(req: Request): Promise<Response> {
         .from(memories)
         .where(and(eq(memories.id, existingId), eq(memories.userId, userId)))
         .limit(1);
-      if (existing) return json(existing, 201);
+      if (existing) {
+        log.info("create idempotent hit", {
+          userId,
+          clientId: body.clientId,
+          memoryId: existing.id,
+        });
+        return json(existing, 201);
+      }
     }
   }
 
@@ -147,7 +160,10 @@ export async function createMemory(req: Request): Promise<Response> {
       createdAt: memories.createdAt,
     });
 
-  if (!created) return serverError("Failed to persist memory.");
+  if (!created) {
+    log.error("create failed: insert returned no row", { userId });
+    return serverError("Failed to persist memory.");
+  }
 
   // Enqueue ingestion (the only async handoff on this path). If Redis is down
   // this throws → 500, but the raw row is already durably stored and can be
@@ -156,6 +172,12 @@ export async function createMemory(req: Request): Promise<Response> {
 
   if (body.clientId) await idemStore(userId, body.clientId, created.id);
 
+  log.info("memory captured", {
+    userId,
+    memoryId: created.id,
+    source: body.source,
+    chars: body.rawText.length,
+  });
   return json(created, 201);
 }
 
@@ -194,6 +216,13 @@ export async function listMemories(req: Request): Promise<Response> {
   const nextCursor =
     items.length === limit && last ? last.createdAt.toISOString() : null;
 
+  log.debug("timeline listed", {
+    userId,
+    count: items.length,
+    limit,
+    hasCursor: Boolean(cursor),
+    hasMore: Boolean(nextCursor),
+  });
   return json({ items, nextCursor });
 }
 
@@ -210,7 +239,10 @@ export async function getMemoryDetail(
     .from(memories)
     .where(and(eq(memories.id, id), eq(memories.userId, userId)))
     .limit(1);
-  if (!memory) return notFound("Memory not found.");
+  if (!memory) {
+    log.debug("memory detail not found", { userId, memoryId: id });
+    return notFound("Memory not found.");
+  }
 
   const derivedFacts = await db
     .select(factCols)

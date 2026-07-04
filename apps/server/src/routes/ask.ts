@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { answerQuestion } from "@repo/core";
+import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
 import { badRequest, unauthorized } from "../http";
+
+const log = createLogger("server:ask");
 
 /**
  * POST /ask (spec 03 §1.2, NEXT_FEATURES §1–2) — the conversational recall/reason
@@ -56,9 +59,18 @@ export async function ask(req: Request): Promise<Response> {
   }
   const parsed = AskBody.safeParse(raw);
   if (!parsed.success) {
-    return badRequest(parsed.error.issues.map((i) => i.message).join("; "));
+    const message = parsed.error.issues.map((i) => i.message).join("; ");
+    log.debug("ask rejected: invalid body", { message });
+    return badRequest(message);
   }
   const { question, history } = parsed.data;
+
+  log.info("ask received", {
+    userId,
+    questionChars: question.length,
+    historyTurns: history?.length ?? 0,
+  });
+  const startedAt = Date.now();
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -93,8 +105,16 @@ export async function ask(req: Request): Promise<Response> {
           steps: final.steps,
           ...(final.clarifyOptions ? { clarifyOptions: final.clarifyOptions } : {}),
         });
+        log.info("ask completed", {
+          userId,
+          mode: final.mode,
+          confidence: final.confidence,
+          citations: final.citations.length,
+          steps: final.steps.length,
+          ms: Date.now() - startedAt,
+        });
       } catch (err) {
-        console.error("[server] /ask failed:", err);
+        log.error("ask failed", err);
         send({ type: "error", message: "Answer generation failed." });
       } finally {
         controller.close();

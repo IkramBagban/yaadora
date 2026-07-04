@@ -725,14 +725,18 @@ export async function hybridSearch(
   const memoryChannels: Promise<Scored<RetrievedMemory>[]>[] = [];
   const factChannels: Promise<Scored<RetrievedFact>[]>[] = [];
 
-  // Vector: one pass per rewritten query embedding (multi-query expansion).
+  // Vector + lexical are the RECALL channels: they search the full user corpus
+  // (hard time predicate only). We deliberately do NOT hard-filter them by the
+  // resolved entity — entity resolution is imperfect (a memory may not be linked
+  // to the entity a query resolves to), and an AND-filter there silently drops
+  // real matches to zero. Entity scoping/precision is provided by the graph
+  // channel below + reranking, not by gating recall. (spec 02 §3.2)
   for (const embedding of embeddings) {
     memoryChannels.push(
       vectorSearchMemories({
         userId,
         embedding,
         timeRange,
-        entityIds,
         limit: perChannelLimit,
       }),
     );
@@ -741,21 +745,20 @@ export async function hybridSearch(
         userId,
         embedding,
         timeRange,
-        entityIds,
         currentOnly,
         limit: perChannelLimit,
       }),
     );
   }
 
-  // Lexical: one pass per rewritten query string.
+  // Lexical: one pass per query string (includes the user's raw query — this is
+  // what recalls literal rare terms like project names).
   for (const query of queries) {
     memoryChannels.push(
       lexicalSearchMemories({
         userId,
         query,
         timeRange,
-        entityIds,
         limit: perChannelLimit,
       }),
     );

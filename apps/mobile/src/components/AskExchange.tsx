@@ -26,9 +26,11 @@ interface AskExchangeProps {
 
 /**
  * One question → answer in the conversation feed. Editorial, not chat-bubble:
- * the question is a serif italic title, the answer is Inter body beneath, with
- * a live thinking line, an optional reasoned-trace chip, citations, and — for
- * clarify turns — calm accent-tinted quick replies.
+ * the question is a serif-italic line pulled to the RIGHT margin (the user's
+ * side), the agent's answer is Inter body on the LEFT. A small uppercase label
+ * over the answer names what kind of reply it is — sourced from memory, a plain
+ * conversational reply, a "found nothing", or a clarifying question — so you can
+ * tell who's speaking and what you got at a glance, without bubbles or avatars.
  */
 export function AskExchange({
   exchange,
@@ -43,53 +45,75 @@ export function AskExchange({
   const errored = exchange.status === 'error';
   const clarify = exchange.mode === 'clarify';
   const thinking = streaming && exchange.text.length === 0;
+  const settled = exchange.status === 'done';
   const bodyTone = dim ? 'ink3' : 'ink';
+
+  // What kind of answer is this? Derived so each turn reads distinctly:
+  //  - grounded     → the reply cites the user's own memories
+  //  - foundNothing → we searched but stood on nothing (honest "not in memory")
+  //  - conversational → plain chat, no search performed
+  const searched = exchange.steps.some((s) => s.kind === 'search');
+  const grounded = exchange.citations.length > 0;
+  const foundNothing = settled && !clarify && !grounded && searched;
+
+  // The answer body tone tracks the kind: accent for a clarifying question,
+  // a quieter ink for a "found nothing", normal otherwise.
+  const answerTone = clarify
+    ? 'accent'
+    : foundNothing
+      ? dim
+        ? 'ink3'
+        : 'ink2'
+      : bodyTone;
 
   return (
     <Animated.View
       entering={FadeInDown.duration(durations.enter).springify().damping(18).stiffness(220)}
       style={styles.wrap}
     >
-      {showRule && (
-        <View style={[styles.rule, { backgroundColor: colors.hairline }]} />
-      )}
+      {showRule && <View style={[styles.rule, { backgroundColor: colors.hairline }]} />}
 
+      {/* The user's words: serif italic, pulled to the right margin. */}
       <Pressable
         onLongPress={onSaveQuestion}
         delayLongPress={320}
         accessibilityHint="Long-press to save this as a memory"
+        style={styles.questionRow}
       >
-        <AppText variant="title" italic tone={dim ? 'ink3' : 'ink2'}>
+        <AppText
+          variant="title"
+          italic
+          align="right"
+          tone={dim ? 'ink3' : 'ink2'}
+          style={styles.question}
+        >
           {exchange.question}
         </AppText>
       </Pressable>
 
-      {clarify && exchange.text.length > 0 && (
-        <Animated.View entering={FadeIn.duration(durations.fade)} style={styles.clarifyLabel}>
-          <AppText variant="micro" tone="accent">
-            A quick question
-          </AppText>
-        </Animated.View>
-      )}
+      {/* The agent's reply: left margin, labelled by kind. */}
+      <View style={styles.answerBlock}>
+        {clarify && exchange.text.length > 0 && (
+          <KindLabel entering text="A quick question" tone="accent" />
+        )}
+        {!clarify && grounded && <KindLabel text="From your memory" tone="accent" />}
+        {foundNothing && <KindLabel text="Not in your memory" tone="ink3" />}
 
-      {errored && !exchange.text ? (
-        <ErrorState
-          title="Can't reach your memories right now"
-          caption="Your question wasn't lost — try again in a moment."
-          onRetry={onRetry}
-        />
-      ) : thinking ? (
-        <ThinkingLine step={exchange.liveStep} />
-      ) : (
-        <AppText
-          variant="body"
-          tone={clarify ? 'accent' : bodyTone}
-          style={styles.answer}
-        >
-          {exchange.text}
-          {streaming && <Caret />}
-        </AppText>
-      )}
+        {errored && !exchange.text ? (
+          <ErrorState
+            title="Can't reach your memories right now"
+            caption="Your question wasn't lost — try again in a moment."
+            onRetry={onRetry}
+          />
+        ) : thinking ? (
+          <ThinkingLine step={exchange.liveStep} />
+        ) : (
+          <AppText variant="body" tone={answerTone}>
+            {exchange.text}
+            {streaming && <Caret />}
+          </AppText>
+        )}
+      </View>
 
       {errored && exchange.text ? (
         <Animated.View entering={FadeIn.duration(durations.fade)} style={styles.interrupted}>
@@ -104,7 +128,7 @@ export function AskExchange({
         </Animated.View>
       ) : null}
 
-      {exchange.status === 'done' && (
+      {settled && (
         <View style={styles.footer}>
           {exchange.mode === 'reason' && <ReasonedTrace steps={exchange.steps} />}
 
@@ -147,6 +171,32 @@ export function AskExchange({
   );
 }
 
+/** Small uppercase cue naming the kind of reply, left-aligned over the answer. */
+function KindLabel({
+  text,
+  tone,
+  entering,
+}: {
+  text: string;
+  tone: 'accent' | 'ink3';
+  entering?: boolean;
+}) {
+  const label = (
+    <AppText variant="micro" tone={tone}>
+      {text}
+    </AppText>
+  );
+  return (
+    <View style={styles.kindLabel}>
+      {entering ? (
+        <Animated.View entering={FadeIn.duration(durations.fade)}>{label}</Animated.View>
+      ) : (
+        label
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   wrap: {
     paddingBottom: space.xl,
@@ -155,12 +205,19 @@ const styles = StyleSheet.create({
     height: hairlineWidth,
     marginBottom: space.xl,
   },
-  clarifyLabel: {
-    marginTop: space.lg,
-    marginBottom: -space.xs,
+  questionRow: {
+    alignItems: 'flex-end',
   },
-  answer: {
+  question: {
+    // Keep the user's line off the far margin so it reads as "their side".
+    maxWidth: '88%',
+  },
+  answerBlock: {
     marginTop: space.lg,
+    alignItems: 'flex-start',
+  },
+  kindLabel: {
+    marginBottom: space.sm,
   },
   interrupted: {
     flexDirection: 'row',

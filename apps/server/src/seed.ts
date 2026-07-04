@@ -1,4 +1,7 @@
 import { db, users, eq } from "@repo/db";
+import { createLogger } from "@repo/logger";
+
+const log = createLogger("server:seed");
 
 /**
  * Single-user bootstrap (spec 03 §1.4). v0 is single-user, but every row is
@@ -16,11 +19,19 @@ export async function seedUser(): Promise<string> {
     .from(users)
     .where(eq(users.email, SEED_EMAIL))
     .limit(1);
-  if (existing) return existing.id;
+  if (existing) {
+    log.debug("seed user already exists", { email: SEED_EMAIL });
+    return existing.id;
+  }
 
   const [created] = await db
     .insert(users)
     .values({ email: SEED_EMAIL, timezone: SEED_TIMEZONE })
     .returning({ id: users.id });
+  log.info("seed user created", {
+    email: SEED_EMAIL,
+    timezone: SEED_TIMEZONE,
+    userId: created!.id,
+  });
   return created!.id;
 }

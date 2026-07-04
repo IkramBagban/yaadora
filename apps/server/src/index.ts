@@ -1,3 +1,4 @@
+import { createLogger, initLogging } from "@repo/logger";
 import { bindUser, isAuthConfigured } from "./auth";
 import { seedUser } from "./seed";
 import { notFound, serverError } from "./http";
@@ -8,6 +9,11 @@ import {
 } from "./routes/memories";
 import { health } from "./routes/health";
 import { ask } from "./routes/ask";
+
+// Declare this process's log target FIRST — every log line (including those
+// emitted deep inside @repo/core) is written to logs/server.log in development.
+initLogging("server");
+const log = createLogger("server");
 
 /**
  * apps/server — the Yaadora HTTP API (spec 01 §2, spec 03 §1).
@@ -22,19 +28,19 @@ import { ask } from "./routes/ask";
 const PORT = Number(process.env.PORT ?? "3000");
 
 if (!isAuthConfigured()) {
-  console.warn(
-    "[server] AUTH_BOOTSTRAP_TOKEN is not set — all requests will be rejected. " +
-      "Set it in .env before capturing memories.",
+  log.warn(
+    "AUTH_BOOTSTRAP_TOKEN is not set — all requests will be rejected. Set it in .env before capturing memories.",
   );
 }
 
 // Seed the single user before serving so auth can bind a real user id.
 const userId = await seedUser();
 bindUser(userId);
-console.log(`[server] bound single user ${userId}`);
+log.info("bound single user", { userId });
 
 const server = Bun.serve({
   port: PORT,
+  idleTimeout: 60, // 60 seconds (prevents timeout on slow LLM reasoning)
   routes: {
     "/health": { GET: () => health() },
     "/memories": {
@@ -49,13 +55,17 @@ const server = Bun.serve({
     },
   },
   // Unmatched routes.
-  fetch() {
+  fetch(req) {
+    log.warn("route not found", {
+      method: req.method,
+      path: new URL(req.url).pathname,
+    });
     return notFound("Route not found.");
   },
   error(err) {
-    console.error("[server] unhandled error:", err);
+    log.error("unhandled error", err);
     return serverError();
   },
 });
 
-console.log(`[server] listening on http://localhost:${server.port}`);
+log.info("listening", { url: `http://localhost:${server.port}` });
