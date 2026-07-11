@@ -1,4 +1,6 @@
-import { API_URL, AUTH_TOKEN } from './config';
+import { API_URL } from './config';
+import { getAuthToken } from './token';
+import { createMobileLogger } from '../lib/log';
 import type {
   CreatedMemory,
   MemoryDetail,
@@ -9,6 +11,7 @@ import type {
   ReminderScope,
 } from './types';
 
+const log = createMobileLogger('api');
 const TIMEOUT_MS = 8000;
 
 export class ApiError extends Error {
@@ -28,11 +31,40 @@ export class ApiError extends Error {
   }
 }
 
-export function authHeaders(): Record<string, string> {
-  return { authorization: `Bearer ${AUTH_TOKEN}` };
+export async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAuthToken();
+  if (!token) {
+    log.debug('authHeaders: no session token');
+    return {};
+  }
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${token}`,
+  };
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) headers['x-timezone'] = tz;
+  } catch {
+    // ignore
+  }
+  log.debug('authHeaders: attached token', {
+    token: log.tokenSummary(token),
+    timezone: headers['x-timezone'] ?? null,
+  });
+  return headers;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const started = Date.now();
+
+  const auth = await authHeaders();
+  if (!auth.authorization) {
+    log.warn('request blocked: not signed in', { method, path, apiUrl: API_URL });
+    throw new ApiError('Sign in to continue.', 'unauthorized', 401);
+  }
+
+  log.info('request start', { method, path, apiUrl: API_URL });
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -42,12 +74,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init,
       headers: {
         'content-type': 'application/json',
-        ...authHeaders(),
+        ...auth,
         ...(init.headers as Record<string, string> | undefined),
       },
       signal: controller.signal,
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    log.error('request network failure', {
+      method,
+      path,
+      apiUrl: API_URL,
+      ms: Date.now() - started,
+      message: err instanceof Error ? err.message : String(err),
+    });
     throw new ApiError("Can't reach your memories right now.", 'network');
   } finally {
     clearTimeout(timer);
@@ -63,13 +103,46 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // non-JSON error body; keep defaults
     }
+    log.warn('request failed', {
+      method,
+      path,
+      status: res.status,
+      code,
+      message,
+      ms: Date.now() - started,
+    });
     throw new ApiError(message, code, res.status);
   }
+
+  log.info('request ok', {
+    method,
+    path,
+    status: res.status,
+    ms: Date.now() - started,
+  });
 
   return (await res.json()) as T;
 }
 
+export interface MeProfile {
+  id: string;
+  email: string;
+  timezone: string;
+  createdAt: string;
+}
+
 export const api = {
+  getMe(): Promise<MeProfile> {
+    return request<MeProfile>('/me');
+  },
+
+  patchMe(input: { timezone: string }): Promise<MeProfile> {
+    return request<MeProfile>('/me', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
   createMemory(input: {
     rawText: string;
     clientId?: string;

@@ -3,4 +3,5 @@ export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:300
   '',
 );
 
-export const AUTH_TOKEN = process.env.EXPO_PUBLIC_AUTH_TOKEN ?? '';
+export const CLERK_PUBLISHABLE_KEY =
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '';

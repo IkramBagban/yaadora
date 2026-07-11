@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, ApiError } from '../api/client';
+import { getAuthToken } from '../api/token';
 import { newClientId } from '../lib/ids';
 
 /**
@@ -112,6 +113,11 @@ function scheduleRetry(): void {
  */
 export async function flushOutbox(): Promise<void> {
   if (state.syncing || !state.hydrated || state.items.length === 0) return;
+
+  // Wait until the user is signed in — don't burn retries on 401s.
+  const token = await getAuthToken();
+  if (!token) return;
+
   if (retryTimer) {
     clearTimeout(retryTimer);
     retryTimer = null;
@@ -139,6 +145,10 @@ export async function flushOutbox(): Promise<void> {
           ),
         });
         void persist();
+        if (err instanceof ApiError && err.status === 401) {
+          setState({ blockedError: 'Sign in to sync your memories.' });
+          break;
+        }
         if (err instanceof ApiError && !err.retryable) {
           setState({ blockedError: message });
         } else {

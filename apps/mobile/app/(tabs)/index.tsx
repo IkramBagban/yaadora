@@ -19,6 +19,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { useClerk } from '@clerk/expo';
 import { enqueueMemory } from '../../src/capture/outbox';
 import { useRecentMemories } from '../../src/capture/useRecentMemories';
 import { AppText } from '../../src/components/AppText';
@@ -56,6 +57,7 @@ export default function CaptureScreen() {
   const { colors, dark } = useTheme();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible();
+  const { signOut } = useClerk();
 
   const [text, setText] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
@@ -136,6 +138,14 @@ export default function CaptureScreen() {
                 hitSlop={12}
               >
                 <Feather name="clock" size={18} color={colors.ink2} />
+              </PressableScale>
+              <PressableScale
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+                onPress={() => void signOut()}
+                hitSlop={12}
+              >
+                <Feather name="log-out" size={18} color={colors.ink2} />
               </PressableScale>
             </View>
           </View>
