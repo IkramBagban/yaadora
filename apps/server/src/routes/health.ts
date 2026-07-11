@@ -17,7 +17,7 @@ async function checkDb(): Promise<boolean> {
     await db.execute(sql`select 1`);
     return true;
   } catch (err) {
-    log.error("db health check failed", err);
+    log.error("db health check failed", err as any);
     return false;
   }
 }
@@ -27,7 +27,7 @@ async function checkRedis(): Promise<boolean> {
     const pong = await Bun.redis.ping();
     return pong === "PONG" || pong === "pong" || Boolean(pong);
   } catch (err) {
-    log.error("redis health check failed", err);
+    log.error("redis health check failed", err as any);
     return false;
   }
 }

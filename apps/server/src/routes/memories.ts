@@ -84,7 +84,7 @@ async function idemLookup(userId: string, clientId: string): Promise<string | nu
   try {
     return await Bun.redis.get(idemKey(userId, clientId));
   } catch (err) {
-    log.warn("idempotency lookup failed (continuing)", err);
+    log.warn("idempotency lookup failed (continuing)", err as any);
     return null;
   }
 }
@@ -99,7 +99,7 @@ async function idemStore(
     await Bun.redis.set(key, memoryId);
     await Bun.redis.expire(key, 60 * 60 * 24 * 7); // 7 days
   } catch (err) {
-    log.warn("idempotency store failed (best-effort)", err);
+    log.warn("idempotency store failed (best-effort)", err as any);
   }
 }
 
