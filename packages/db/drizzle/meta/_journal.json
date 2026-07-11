@@ -15,6 +15,20 @@
       "when": 1783077231170,
       "tag": "0001_nebulous_mockingbird",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783418721338,
+      "tag": "0002_damp_boomer",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783694324456,
+      "tag": "0003_thin_james_howlett",
+      "breakpoints": true
     }
   ]
 }

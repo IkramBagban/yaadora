@@ -1,7 +1,10 @@
 const AUTH_BOOTSTRAP_TOKEN = process.env.AUTH_BOOTSTRAP_TOKEN;
+const ALLOW_BOOTSTRAP = process.env.AUTH_ALLOW_BOOTSTRAP === "true";
 
-if (!AUTH_BOOTSTRAP_TOKEN) {
-  console.error("AUTH_BOOTSTRAP_TOKEN is missing from .env");
+if (!ALLOW_BOOTSTRAP || !AUTH_BOOTSTRAP_TOKEN) {
+  console.error(
+    "Seed requires AUTH_ALLOW_BOOTSTRAP=true and AUTH_BOOTSTRAP_TOKEN in .env (dev/eval only).",
+  );
   process.exit(1);
 }
 

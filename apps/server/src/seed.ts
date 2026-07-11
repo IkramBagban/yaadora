@@ -4,23 +4,20 @@ import { createLogger } from "@repo/logger";
 const log = createLogger("server:seed");
 
 /**
- * Single-user bootstrap (spec 03 §1.4). v0 is single-user, but every row is
- * already `user_id`-scoped, so going multi-user later is a drop-in: replace this
- * seed + the token→user mapping in `auth.ts` with real user records.
- *
- * Seeds one user from env (idempotent — safe to run on every boot).
+ * Bootstrap user for local eval/seed scripts only.
+ * Enabled when AUTH_ALLOW_BOOTSTRAP=true. Production should not use this.
  */
 const SEED_EMAIL = process.env.SEED_USER_EMAIL ?? "owner@yaadora.local";
 const SEED_TIMEZONE = process.env.SEED_USER_TIMEZONE ?? "UTC";
 
-export async function seedUser(): Promise<string> {
+export async function ensureBootstrapUser(): Promise<string> {
   const [existing] = await db
     .select({ id: users.id })
     .from(users)
     .where(eq(users.email, SEED_EMAIL))
     .limit(1);
   if (existing) {
-    log.debug("seed user already exists", { email: SEED_EMAIL });
+    log.debug("bootstrap user already exists", { email: SEED_EMAIL });
     return existing.id;
   }
 
@@ -28,7 +25,7 @@ export async function seedUser(): Promise<string> {
     .insert(users)
     .values({ email: SEED_EMAIL, timezone: SEED_TIMEZONE })
     .returning({ id: users.id });
-  log.info("seed user created", {
+  log.info("bootstrap user created", {
     email: SEED_EMAIL,
     timezone: SEED_TIMEZONE,
     userId: created!.id,
