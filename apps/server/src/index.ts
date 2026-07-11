@@ -1,6 +1,11 @@
 import { createLogger, initLogging } from "@repo/logger";
-import { bindUser, isAuthConfigured } from "./auth";
-import { seedUser } from "./seed";
+import {
+  bindBootstrapUser,
+  isAuthConfigured,
+  isBootstrapAllowed,
+  isClerkConfigured,
+} from "./auth";
+import { ensureBootstrapUser } from "./seed";
 import { notFound, serverError } from "./http";
 import {
   createMemory,
@@ -17,6 +22,7 @@ import {
   listReminders,
   cancelReminder,
 } from "./routes/reminders";
+import { getMe, patchMe } from "./routes/me";
 
 // Declare this process's log target FIRST — every log line (including those
 // emitted deep inside @repo/core) is written to logs/server.log in development.
@@ -26,31 +32,52 @@ const log = createLogger("server");
 /**
  * apps/server — the Yaadora HTTP API (spec 01 §2, spec 03 §1).
  *
- * A small typed router on Bun.serve's `routes` (no express): capture (the
- * sacred fast path), timeline reads, memory detail, health, and Ask (streamed
- * grounded recall). Reminders + decision mode are later waves.
+ * Auth: Clerk session JWTs (primary). Optional bootstrap bearer only when
+ * AUTH_ALLOW_BOOTSTRAP=true for local seed/eval.
  *
  * Run: `bun run src/index.ts` (or `bun run dev` for hot reload).
  */
 
 const PORT = Number(process.env.PORT ?? "3000");
 
+log.info("auth config at boot", {
+  clerkConfigured: isClerkConfigured(),
+  clerkSecretKeyLen: process.env.CLERK_SECRET_KEY?.length ?? 0,
+  clerkPublishableKeyLen: process.env.CLERK_PUBLISHABLE_KEY?.length ?? 0,
+  clerkJwtKeySet: Boolean(process.env.CLERK_JWT_KEY),
+  bootstrapAllowed: isBootstrapAllowed(),
+  bootstrapTokenSet: Boolean(process.env.AUTH_BOOTSTRAP_TOKEN),
+  port: PORT,
+  nodeEnv: process.env.NODE_ENV ?? null,
+});
+
 if (!isAuthConfigured()) {
   log.warn(
-    "AUTH_BOOTSTRAP_TOKEN is not set — all requests will be rejected. Set it in .env before capturing memories.",
+    "Neither CLERK_SECRET_KEY nor bootstrap auth is configured — protected routes will return 401.",
+  );
+} else if (!isClerkConfigured()) {
+  log.warn(
+    "CLERK_SECRET_KEY is not set — only bootstrap auth (if enabled) will work.",
   );
 }
 
-// Seed the single user before serving so auth can bind a real user id.
-const userId = await seedUser();
-bindUser(userId);
-log.info("bound single user", { userId });
+if (isBootstrapAllowed()) {
+  const userId = await ensureBootstrapUser();
+  bindBootstrapUser(userId);
+  log.info("bootstrap auth enabled (dev/eval only)", { userId });
+} else {
+  log.info("bootstrap auth disabled — Clerk JWTs only");
+}
 
 const server = Bun.serve({
   port: PORT,
   idleTimeout: 60, // 60 seconds (prevents timeout on slow LLM reasoning)
   routes: {
     "/health": { GET: () => health() },
+    "/me": {
+      GET: (req) => getMe(req),
+      PATCH: (req) => patchMe(req),
+    },
     "/memories": {
       POST: (req) => createMemory(req),
       GET: (req) => listMemories(req),

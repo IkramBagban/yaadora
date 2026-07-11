@@ -40,7 +40,7 @@ const ConfirmBody = z.object({
 
 /** POST /reminders/confirm — turn a suggestion (or explicit ask) into a reminder. */
 export async function confirmReminder(req: Request): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   let raw: unknown;
@@ -92,7 +92,7 @@ const ListQuery = z.object({
 
 /** GET /reminders?scope=&limit= — the user's reminders, soonest first. */
 export async function listReminders(req: Request): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const url = new URL(req.url);
@@ -135,7 +135,7 @@ export async function confirmSuggestedReminder(
   req: Request,
   id: string,
 ): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const [updated] = await db
@@ -172,7 +172,7 @@ const UpdateBody = z
 
 /** PATCH /reminders/:id — edit an existing reminder (text / time / status). */
 export async function updateReminder(req: Request, id: string): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   let raw: unknown;
@@ -207,7 +207,7 @@ export async function updateReminder(req: Request, id: string): Promise<Response
 
 /** POST /reminders/:id/complete — mark a reminder done. Owner-scoped. */
 export async function completeReminder(req: Request, id: string): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const [updated] = await db
@@ -226,7 +226,7 @@ export async function completeReminder(req: Request, id: string): Promise<Respon
 
 /** DELETE /reminders/:id — cancel / undo. Soft (status='dismissed'), scoped to owner. */
 export async function cancelReminder(req: Request, id: string): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const [updated] = await db

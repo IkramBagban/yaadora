@@ -105,7 +105,7 @@ async function idemStore(
 
 /** POST /memories — the sacred fast path. */
 export async function createMemory(req: Request): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   let raw: unknown;
@@ -188,7 +188,7 @@ const ListQuery = z.object({
 
 /** GET /memories?cursor=&limit= — paginated timeline, newest first. */
 export async function listMemories(req: Request): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const url = new URL(req.url);
@@ -231,7 +231,7 @@ export async function getMemoryDetail(
   req: Request,
   id: string,
 ): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   const [memory] = await db

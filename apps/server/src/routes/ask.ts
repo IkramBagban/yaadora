@@ -55,7 +55,7 @@ function sse(obj: unknown): string {
 }
 
 export async function ask(req: Request): Promise<Response> {
-  const userId = authenticate(req);
+  const userId = await authenticate(req);
   if (!userId) return unauthorized();
 
   let raw: unknown;

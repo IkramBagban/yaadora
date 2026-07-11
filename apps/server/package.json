@@ -9,6 +9,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/backend": "^3.11.3",
     "@repo/core": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/logger": "workspace:*",
