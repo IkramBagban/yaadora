@@ -1,0 +1,69 @@
+name: Server CD (VM Docker)
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - "apps/server/**"
+      - "packages/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/server-cd.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/server/Dockerfile
+          push: true
+          tags: |
+            ikrambagban/yaadora-server:${{ github.sha }}
+            ikrambagban/yaadora-server:staging
+
+      - name: Deploy server container on VM
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: ${{ secrets.VM_PORT }}
+          script: |
+            set -euo pipefail
+
+            IMAGE_NAME="ikrambagban/yaadora-server:${{ github.sha }}"
+            CONTAINER_NAME="yaadora-server"
+            NETWORK_NAME="yaadora-internal"
+
+            docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1 || docker network create "${NETWORK_NAME}"
+
+            : > ~/yaadora-server.env
+            if [ -n "${{ secrets.SERVER_ENV_FILE }}" ]; then
+              printf "%s\n" "${{ secrets.SERVER_ENV_FILE }}" > ~/yaadora-server.env
+            fi
+
+            docker pull "${IMAGE_NAME}"
+            docker rm -f "${CONTAINER_NAME}" || true
+
+            docker run -d \
+              --name "${CONTAINER_NAME}" \
+              --restart unless-stopped \
+              --network "${NETWORK_NAME}" \
+              --env-file ~/yaadora-server.env \
+              -p 127.0.0.1:3000:3000 \
+              "${IMAGE_NAME}"
+
+            docker ps --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
