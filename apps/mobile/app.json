@@ -51,6 +51,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4c7d417f-4351-404c-94af-a70619f2a73e"
+      }
+    },
+    "owner": "ikram_bagban"
   }
 }
