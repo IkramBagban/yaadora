@@ -63,7 +63,7 @@ jobs:
               --restart unless-stopped \
               --network "${NETWORK_NAME}" \
               --env-file ~/yaadora-server.env \
-              -p 127.0.0.1:3000:3000 \
+              -p 3000:3000 \
               "${IMAGE_NAME}"
 
             docker ps --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
