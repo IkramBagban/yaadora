@@ -13,6 +13,7 @@ import {
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
+import { getRedis } from "../redis";
 import { json, badRequest, notFound, unauthorized, serverError } from "../http";
 
 const log = createLogger("server:memories");
@@ -82,7 +83,7 @@ function idemKey(userId: string, clientId: string): string {
 
 async function idemLookup(userId: string, clientId: string): Promise<string | null> {
   try {
-    return await Bun.redis.get(idemKey(userId, clientId));
+    return await getRedis().get(idemKey(userId, clientId));
   } catch (err) {
     log.warn("idempotency lookup failed (continuing)", err as any);
     return null;
@@ -96,8 +97,8 @@ async function idemStore(
 ): Promise<void> {
   try {
     const key = idemKey(userId, clientId);
-    await Bun.redis.set(key, memoryId);
-    await Bun.redis.expire(key, 60 * 60 * 24 * 7); // 7 days
+    await getRedis().set(key, memoryId);
+    await getRedis().expire(key, 60 * 60 * 24 * 7); // 7 days
   } catch (err) {
     log.warn("idempotency store failed (best-effort)", err as any);
   }

@@ -1,6 +1,7 @@
 import { db, sql } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { json } from "../http";
+import { getRedis } from "../redis";
 
 const log = createLogger("server:health");
 
@@ -24,10 +25,11 @@ async function checkDb(): Promise<boolean> {
 
 async function checkRedis(): Promise<boolean> {
   try {
-    const pong = await Bun.redis.ping();
+    const pong = await getRedis().ping();
     return pong === "PONG" || pong === "pong" || Boolean(pong);
   } catch (err) {
     log.error("redis health check failed", err as any);
     return false;
   }
 }
+
