@@ -55,6 +55,8 @@ jobs:
 
             # Write env file safely from env var
             echo "$WORKER_ENV_FILE" > ~/yaadora-worker.env
+            # Strip inline comments for Docker compatibility
+            sed -i 's/[[:space:]]*#.*$//' ~/yaadora-worker.env
             # Strip surrounding quotes from values for Docker compatibility
             sed -i -E "s/^([A-Za-z0-9_]+)=['\"](.*)['\"]/\1=\2/" ~/yaadora-worker.env
 
