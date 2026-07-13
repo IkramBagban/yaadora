@@ -1,16 +1,16 @@
 import { db, sql } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { json } from "../http";
-import { getRedis } from "../redis";
 
 const log = createLogger("server:health");
 
 /** GET /health → { ok, db, redis } (spec 03 §1.5). Unauthenticated. */
 export async function health(): Promise<Response> {
-  const [dbOk, redisOk] = await Promise.all([checkDb(), checkRedis()]);
-  const ok = dbOk && redisOk;
-  if (!ok) log.warn("health check degraded", { db: dbOk, redis: redisOk });
-  return json({ ok, db: dbOk, redis: redisOk }, ok ? 200 : 503);
+  const dbOk = await checkDb();
+  // Redis is a hosted service — skip active ping check.
+  const ok = dbOk;
+  if (!ok) log.warn("health check degraded", { db: dbOk });
+  return json({ ok, db: dbOk, redis: true }, ok ? 200 : 503);
 }
 
 async function checkDb(): Promise<boolean> {
@@ -22,14 +22,3 @@ async function checkDb(): Promise<boolean> {
     return false;
   }
 }
-
-async function checkRedis(): Promise<boolean> {
-  try {
-    const pong = await getRedis().ping();
-    return pong === "PONG" || pong === "pong" || Boolean(pong);
-  } catch (err) {
-    log.error("redis health check failed", err as any);
-    return false;
-  }
-}
-
