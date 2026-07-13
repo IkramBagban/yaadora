@@ -1,4 +1,4 @@
-FROM oven/bun:1.1.20-slim AS base
+FROM oven/bun:1.2.4-slim AS base
 WORKDIR /usr/src/app
 
 # Copy lock and package files
