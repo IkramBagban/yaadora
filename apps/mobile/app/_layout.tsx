@@ -21,6 +21,7 @@ import { ClerkTokenBridge } from '../src/auth/ClerkTokenBridge';
 import { CLERK_PUBLISHABLE_KEY } from '../src/api/config';
 import { createMobileLogger } from '../src/lib/log';
 import { useTheme } from '../src/theme/useTheme';
+import { AppText } from '../src/components/AppText';
 
 const log = createMobileLogger('auth:gate');
 
@@ -140,7 +141,10 @@ export default function RootLayout() {
           padding: 24,
         }}
       >
-        <ActivityIndicator color={colors.accent} />
+        <AppText tone="danger">Missing Clerk Publishable Key</AppText>
+        <AppText variant="caption" tone="ink3" style={{ textAlign: 'center', marginTop: 8 }}>
+          The app was built without EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY.
+        </AppText>
       </View>
     );
   }

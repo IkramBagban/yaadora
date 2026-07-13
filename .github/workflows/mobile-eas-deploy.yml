@@ -48,4 +48,8 @@ jobs:
         run: bun run --cwd apps/mobile check-types
 
       - name: Build installable Android APK (preview)
-        run: cd apps/mobile && eas build --platform android --profile preview --non-interactive
+        run: |
+          cd apps/mobile
+          echo "EXPO_PUBLIC_API_URL=${{ secrets.EXPO_PUBLIC_API_URL }}" > .env
+          echo "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY }}" >> .env
+          eas build --platform android --profile preview --non-interactive
