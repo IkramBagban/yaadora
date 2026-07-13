@@ -36,11 +36,14 @@ jobs:
 
       - name: Deploy server container on VM
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          SERVER_ENV_FILE: ${{ secrets.SERVER_ENV_FILE }}
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           port: ${{ secrets.VM_PORT }}
+          envs: SERVER_ENV_FILE
           script: |
             set -euo pipefail
 
@@ -50,10 +53,8 @@ jobs:
 
             docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1 || docker network create "${NETWORK_NAME}"
 
-            : > ~/yaadora-server.env
-            if [ -n "${{ secrets.SERVER_ENV_FILE }}" ]; then
-              printf "%s\n" "${{ secrets.SERVER_ENV_FILE }}" > ~/yaadora-server.env
-            fi
+            # Write env file safely from env var
+            echo "$SERVER_ENV_FILE" > ~/yaadora-server.env
 
             docker pull "${IMAGE_NAME}"
             docker rm -f "${CONTAINER_NAME}" || true
