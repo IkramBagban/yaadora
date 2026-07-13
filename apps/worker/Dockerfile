@@ -12,7 +12,7 @@ COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/ui/package.json ./packages/ui/
 
 # Install dependencies
-RUN bun install --frozen-lockfile --ignore-scripts
+RUN bun install --ignore-scripts
 
 # Copy source files
 COPY apps/worker ./apps/worker
