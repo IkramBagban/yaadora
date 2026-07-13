@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Link, useRouter, type Href } from 'expo-router';
+import Feather from '@expo/vector-icons/Feather';
 import { useSignUp } from '@clerk/expo/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../../src/components/AppText';
@@ -484,9 +485,14 @@ export default function SignUpScreen() {
         ) : null}
 
         {localError ? (
-          <AppText variant="caption" tone="danger" style={styles.error}>
-            {localError}
-          </AppText>
+          <View style={[styles.errorChip, { backgroundColor: colors.danger + '15', borderColor: colors.danger + '30' }]}>
+            <AppText variant="caption" tone="danger" style={{ flex: 1 }}>
+              {localError}
+            </AppText>
+            <PressableScale onPress={() => setLocalError(null)} hitSlop={12}>
+              <Feather name="x" size={16} color={colors.danger} />
+            </PressableScale>
+          </View>
         ) : null}
 
         <PressableScale
@@ -574,8 +580,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: fonts.sans,
   },
-  error: {
+  errorChip: {
     marginTop: space.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: space.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
   },
   button: {
     marginTop: space.lg,
