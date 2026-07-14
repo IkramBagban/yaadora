@@ -20,7 +20,9 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useClerk } from '@clerk/expo';
+import { API_URL } from '../../src/api/config';
 import { enqueueMemory } from '../../src/capture/outbox';
+import { useOutbox } from '../../src/capture/useOutbox';
 import { useRecentMemories } from '../../src/capture/useRecentMemories';
 import { AppText } from '../../src/components/AppText';
 import { MemoryRow } from '../../src/components/MemoryRow';
@@ -73,6 +75,19 @@ export default function CaptureScreen() {
 
   const showRecent = !keyboardVisible && text.length === 0;
   const recent = useRecentMemories(showRecent);
+  const { items, blockedError } = useOutbox();
+  const lastError = items[0]?.lastError;
+
+  const outboxErrorChip = () => {
+    if (!blockedError && !lastError) return null;
+    return (
+      <View style={{ backgroundColor: colors.danger + '15', padding: space.sm, borderRadius: radius.md, marginBottom: space.md, borderWidth: 1, borderColor: colors.danger + '30' }}>
+        <AppText variant="captionMedium" tone="danger" style={{ marginBottom: 4 }}>Sync Error</AppText>
+        <AppText variant="caption" tone="danger" style={{ marginBottom: 4 }}>{blockedError || lastError}</AppText>
+        <AppText variant="micro" tone="ink3">API: {API_URL}</AppText>
+      </View>
+    );
+  };
 
   // Focus after the screen transition settles, so the keyboard doesn't jank it.
   useEffect(() => {
@@ -151,6 +166,7 @@ export default function CaptureScreen() {
           </View>
 
           <Animated.View style={[styles.editor, editorStyle]}>
+            {outboxErrorChip()}
             {text.length === 0 && (
               <Animated.View
                 pointerEvents="none"
