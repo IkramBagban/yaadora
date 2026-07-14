@@ -14,15 +14,27 @@ import type {
 const log = createMobileLogger('api');
 const TIMEOUT_MS = 8000;
 
+export interface ApiErrorDetails {
+  url: string;
+  method: string;
+  status: number | null;
+  code: string;
+  originalError?: string;
+  responseBody?: unknown;
+  durationMs: number;
+}
+
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number | null;
+  readonly details: ApiErrorDetails | null;
 
-  constructor(message: string, code: string, status: number | null = null) {
+  constructor(message: string, code: string, status: number | null = null, details: ApiErrorDetails | null = null) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 
   /** Network failures and 5xx are worth retrying; 4xx means the request itself is wrong. */
@@ -81,14 +93,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    const ms = Date.now() - started;
+    const originalError = err instanceof Error ? err.message : String(err);
     log.error('request network failure', {
       method,
       path,
       apiUrl: API_URL,
-      ms: Date.now() - started,
-      message: err instanceof Error ? err.message : String(err),
+      ms,
+      message: originalError,
     });
-    throw new ApiError("Can't reach your memories right now.", 'network');
+    throw new ApiError("Can't reach your memories right now.", 'network', null, {
+      url: `${API_URL}${path}`,
+      method,
+      status: null,
+      code: 'network',
+      originalError,
+      durationMs: ms,
+    });
   } finally {
     clearTimeout(timer);
   }
@@ -96,22 +117,32 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let message = `Request failed (${res.status}).`;
     let code = 'http_error';
+    let responseBody: unknown = null;
     try {
       const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      responseBody = body;
       if (body.error?.message) message = body.error.message;
       if (body.error?.code) code = body.error.code;
     } catch {
       // non-JSON error body; keep defaults
     }
+    const ms = Date.now() - started;
     log.warn('request failed', {
       method,
       path,
       status: res.status,
       code,
       message,
-      ms: Date.now() - started,
+      ms,
     });
-    throw new ApiError(message, code, res.status);
+    throw new ApiError(message, code, res.status, {
+      url: `${API_URL}${path}`,
+      method,
+      status: res.status,
+      code,
+      responseBody,
+      durationMs: ms,
+    });
   }
 
   log.info('request ok', {

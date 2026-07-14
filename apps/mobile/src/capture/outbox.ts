@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, type ApiErrorDetails } from '../api/client';
 import { getAuthToken } from '../api/token';
 import { newClientId } from '../lib/ids';
 
@@ -19,6 +19,7 @@ export interface OutboxItem {
   createdAt: string;
   attempts: number;
   lastError?: string;
+  errorDetails?: ApiErrorDetails | null;
 }
 
 export interface OutboxState {
@@ -29,6 +30,8 @@ export interface OutboxState {
   lastSyncedAt: number | null;
   /** A non-retryable server rejection (e.g. bad token); shown quietly, retried manually. */
   blockedError: string | null;
+  /** Full error details for the debug modal. */
+  lastErrorDetails: ApiErrorDetails | null;
 }
 
 const STORAGE_KEY = 'yaadora.outbox.v1';
@@ -40,6 +43,7 @@ let state: OutboxState = {
   hydrated: false,
   lastSyncedAt: null,
   blockedError: null,
+  lastErrorDetails: null,
 };
 
 const listeners = new Set<() => void>();
@@ -139,10 +143,12 @@ export async function flushOutbox(): Promise<void> {
         drained = state.items.length === 0;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed.';
+        const details = err instanceof ApiError ? err.details : null;
         setState({
           items: state.items.map((it, i) =>
-            i === 0 ? { ...it, attempts: it.attempts + 1, lastError: message } : it,
+            i === 0 ? { ...it, attempts: it.attempts + 1, lastError: message, errorDetails: details } : it,
           ),
+          lastErrorDetails: details,
         });
         void persist();
         if (err instanceof ApiError && err.status === 401) {

@@ -1,4 +1,4 @@
-export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://34.63.51.172:3000').replace(
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://34.63.51.172').replace(
   /\/+$/,
   '',
 );
