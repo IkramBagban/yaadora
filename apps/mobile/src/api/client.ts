@@ -6,6 +6,7 @@ import type {
   MemoryDetail,
   MemoryPage,
   MemorySource,
+  Recurrence,
   Reminder,
   ReminderList,
   ReminderScope,
@@ -210,6 +211,8 @@ export const api = {
     dueAt: string;
     sourceMemoryId?: string;
     origin?: 'suggested' | 'manual';
+    recurrence?: Recurrence;
+    weekdays?: number[] | null;
   }): Promise<Reminder> {
     return request<Reminder>('/reminders/confirm', {
       method: 'POST',
@@ -218,17 +221,28 @@ export const api = {
   },
 
   /** Create a reminder manually from the UI (origin=manual, immediately pending). */
-  createReminder(input: { text: string; dueAt: string }): Promise<Reminder> {
+  createReminder(input: {
+    text: string;
+    dueAt: string;
+    recurrence?: Recurrence;
+    weekdays?: number[] | null;
+  }): Promise<Reminder> {
     return request<Reminder>('/reminders/confirm', {
       method: 'POST',
       body: JSON.stringify({ ...input, origin: 'manual' }),
     });
   },
 
-  /** Edit an existing reminder (text and/or time). */
+  /** Edit an existing reminder (text, time, and/or recurrence). */
   updateReminder(
     id: string,
-    patch: { text?: string; dueAt?: string; status?: 'pending' | 'done' | 'dismissed' },
+    patch: {
+      text?: string;
+      dueAt?: string;
+      status?: 'pending' | 'done' | 'dismissed';
+      recurrence?: Recurrence;
+      weekdays?: number[] | null;
+    },
   ): Promise<Reminder> {
     return request<Reminder>(`/reminders/${encodeURIComponent(id)}`, {
       method: 'PATCH',

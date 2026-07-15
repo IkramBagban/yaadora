@@ -11,14 +11,39 @@ export type ReminderStatus =
   | (string & {});
 export type ReminderOrigin = 'manual' | 'suggested' | (string & {});
 
+/**
+ * How a reminder repeats.
+ * - `once`   → fires a single time at `dueAt`.
+ * - `daily`  → fires every day at `dueAt`'s clock time.
+ * - `weekly` → fires on each weekday in `weekdays` at `dueAt`'s clock time.
+ */
+export type Recurrence = 'once' | 'daily' | 'weekly';
+
+/** Weekday numbers use JS `Date.getDay()` convention: 0 = Sunday … 6 = Saturday. */
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
 export interface Reminder {
   id: string;
   text: string;
+  /**
+   * For `once`, the exact fire time. For `daily`/`weekly`, the next occurrence —
+   * its clock time (hour:minute) is the recurring time-of-day.
+   */
   dueAt: string;
+  recurrence: Recurrence;
+  /** Selected weekdays (0–6) for `weekly`; `null` for `once`/`daily`. */
+  weekdays: number[] | null;
   status: ReminderStatus;
   origin: ReminderOrigin;
   sourceMemory: string | null;
   createdAt: string;
+}
+
+/** Schedule payload shared by create/confirm/update. `weekdays` required (non-empty) iff `weekly`. */
+export interface ReminderSchedule {
+  dueAt: string;
+  recurrence?: Recurrence;
+  weekdays?: number[] | null;
 }
 
 /** GET /reminders */
