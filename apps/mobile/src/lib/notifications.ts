@@ -5,14 +5,34 @@ import type { Reminder } from '../api/types';
 
 /**
  * Local, on-device reminder notifications — no push service, no server, no
- * account, nothing paid. Each pending reminder schedules an OS-level local
- * notification at its due time; the OS fires it even if the app is closed.
+ * account, nothing paid. Each pending reminder schedules one or more OS-level
+ * local notifications; the OS fires them even if the app is closed.
  *
  * Source of truth is the server's reminder list. `syncScheduled` reconciles the
  * scheduled OS notifications against that list on every load / foreground:
  * schedule the ones that should fire, cancel the ones that shouldn't. A tiny
- * AsyncStorage map (reminderId → osNotificationId) lets us cancel precisely.
+ * AsyncStorage map (reminderId → osNotificationId[]) lets us cancel precisely.
+ *
+ * Recurrence: a reminder is 'once' (a single DATE trigger at `dueAt`), 'daily'
+ * (a repeating DAILY trigger at `dueAt`'s time-of-day), or 'weekly' (one
+ * repeating WEEKLY trigger per selected weekday, all at `dueAt`'s time-of-day).
+ * That's why the map value is an array — a weekly reminder owns multiple OS
+ * notification ids.
  */
+
+/**
+ * `Reminder` as it will look once the shared `recurrence`/`weekdays` contract
+ * lands in `api/types.ts` (see docs/superpowers/specs/2026-07-15-reminder-
+ * recurrence-design.md). Declared locally with optional fields so this file
+ * compiles against the current wire type too, and so the runtime defensively
+ * treats an absent `recurrence` as `'once'` (see `resolveRecurrence` below) —
+ * that covers older server responses that predate the field.
+ */
+type Recurrence = 'once' | 'daily' | 'weekly';
+type ReminderWithRecurrence = Reminder & {
+  recurrence?: Recurrence;
+  weekdays?: number[] | null;
+};
 
 const MAP_KEY = 'reminders:notif-map:v1';
 const CHANNEL_ID = 'reminders';
@@ -33,16 +53,16 @@ function ensureHandler(): void {
   handlerReady = true;
 }
 
-async function readMap(): Promise<Record<string, string>> {
+async function readMap(): Promise<Record<string, string[]>> {
   try {
     const raw = await AsyncStorage.getItem(MAP_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    return raw ? (JSON.parse(raw) as Record<string, string[]>) : {};
   } catch {
     return {};
   }
 }
 
-async function writeMap(map: Record<string, string>): Promise<void> {
+async function writeMap(map: Record<string, string[]>): Promise<void> {
   try {
     await AsyncStorage.setItem(MAP_KEY, JSON.stringify(map));
   } catch {
@@ -89,24 +109,99 @@ function isFuture(iso: string): boolean {
   return !Number.isNaN(t) && t > Date.now() + 1000;
 }
 
-async function scheduleOne(reminder: Reminder): Promise<string | null> {
-  try {
-    return await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Reminder',
-        body: reminder.text,
-        sound: 'default',
-        data: { reminderId: reminder.id },
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: new Date(reminder.dueAt),
-        channelId: CHANNEL_ID,
-      },
-    });
-  } catch {
-    return null;
+/** Defensive read of `recurrence`: missing/unrecognized → 'once'. */
+function resolveRecurrence(reminder: ReminderWithRecurrence): Recurrence {
+  const r = reminder.recurrence;
+  return r === 'daily' || r === 'weekly' ? r : 'once';
+}
+
+/**
+ * Map our 0..6 (JS `Date.getDay()`, 0=Sunday) weekday convention to Expo's
+ * 1..7 (1=Sunday) convention used by `WeeklyTriggerInput.weekday`.
+ */
+function toExpoWeekday(jsWeekday: number): number {
+  return jsWeekday + 1;
+}
+
+/**
+ * Schedule the OS notification(s) for one reminder according to its
+ * recurrence, returning the created OS notification ids. Never throws.
+ */
+async function scheduleOne(reminder: ReminderWithRecurrence): Promise<string[]> {
+  const recurrence = resolveRecurrence(reminder);
+  const due = new Date(reminder.dueAt);
+  const hour = due.getHours();
+  const minute = due.getMinutes();
+
+  const content = {
+    title: 'Reminder',
+    body: reminder.text,
+    sound: 'default' as const,
+    data: { reminderId: reminder.id },
+  };
+
+  if (recurrence === 'once') {
+    if (!isFuture(reminder.dueAt)) return [];
+    try {
+      const id = await Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: due,
+          channelId: CHANNEL_ID,
+        },
+      });
+      return [id];
+    } catch {
+      return [];
+    }
   }
+
+  if (recurrence === 'daily') {
+    try {
+      const id = await Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour,
+          minute,
+          channelId: CHANNEL_ID,
+        },
+      });
+      return [id];
+    } catch {
+      return [];
+    }
+  }
+
+  // recurrence === 'weekly'
+  const weekdays = reminder.weekdays;
+  if (!weekdays || weekdays.length === 0) {
+    // No weekdays selected — nothing safe to schedule on a recurring basis.
+    // Rather than guess a day, schedule nothing; the reminder simply won't
+    // fire until the server-side data is corrected.
+    return [];
+  }
+
+  const ids: string[] = [];
+  for (const jsWeekday of weekdays) {
+    try {
+      const id = await Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+          weekday: toExpoWeekday(jsWeekday),
+          hour,
+          minute,
+          channelId: CHANNEL_ID,
+        },
+      });
+      ids.push(id);
+    } catch {
+      /* skip this weekday, keep the rest */
+    }
+  }
+  return ids;
 }
 
 async function cancelOne(osId: string): Promise<void> {
@@ -117,10 +212,17 @@ async function cancelOne(osId: string): Promise<void> {
   }
 }
 
+async function cancelMany(osIds: string[]): Promise<void> {
+  for (const osId of osIds) {
+    await cancelOne(osId);
+  }
+}
+
 /**
- * Reconcile scheduled OS notifications with the given reminders. Only pending,
- * future reminders should be scheduled; everything else is cancelled. Returns
- * the number currently scheduled. Never throws.
+ * Reconcile scheduled OS notifications with the given reminders. Only pending
+ * reminders (future for 'once'; any pending 'daily'/'weekly') should be
+ * scheduled; everything else is cancelled. Returns the number of reminders
+ * currently scheduled. Never throws.
  */
 export async function syncScheduled(reminders: Reminder[]): Promise<number> {
   try {
@@ -130,24 +232,29 @@ export async function syncScheduled(reminders: Reminder[]): Promise<number> {
 
     const map = await readMap();
     const want = new Map(
-      reminders
-        .filter((r) => r.status === 'pending' && isFuture(r.dueAt))
-        .map((r) => [r.id, r]),
+      (reminders as ReminderWithRecurrence[])
+        .filter((r) => {
+          if (r.status !== 'pending') return false;
+          // 'once' reminders in the past are done; daily/weekly are always
+          // eligible since they recur regardless of dueAt's date.
+          return resolveRecurrence(r) === 'once' ? isFuture(r.dueAt) : true;
+        })
+        .map((r) => [r.id, r] as const),
     );
 
     // Cancel notifications that are no longer wanted.
-    for (const [reminderId, osId] of Object.entries(map)) {
+    for (const [reminderId, osIds] of Object.entries(map)) {
       if (!want.has(reminderId)) {
-        await cancelOne(osId);
+        await cancelMany(osIds);
         delete map[reminderId];
       }
     }
 
     // Schedule any wanted reminder that isn't scheduled yet.
     for (const [reminderId, reminder] of want) {
-      if (map[reminderId]) continue;
-      const osId = await scheduleOne(reminder);
-      if (osId) map[reminderId] = osId;
+      if (map[reminderId]?.length) continue;
+      const osIds = await scheduleOne(reminder);
+      if (osIds.length) map[reminderId] = osIds;
     }
 
     await writeMap(map);
@@ -163,14 +270,16 @@ export async function syncScheduled(reminders: Reminder[]): Promise<number> {
  */
 export async function scheduleReminder(reminder: Reminder): Promise<void> {
   try {
-    if (!isFuture(reminder.dueAt)) return;
+    const r = reminder as ReminderWithRecurrence;
+    const recurrence = resolveRecurrence(r);
+    if (recurrence === 'once' && !isFuture(r.dueAt)) return;
     const granted = await hasNotificationPermission();
     if (!granted) return;
     const map = await readMap();
-    if (map[reminder.id]) return;
-    const osId = await scheduleOne(reminder);
-    if (osId) {
-      map[reminder.id] = osId;
+    if (map[r.id]?.length) return;
+    const osIds = await scheduleOne(r);
+    if (osIds.length) {
+      map[r.id] = osIds;
       await writeMap(map);
     }
   } catch {
@@ -178,12 +287,12 @@ export async function scheduleReminder(reminder: Reminder): Promise<void> {
   }
 }
 
-/** Cancel a single reminder's notification immediately (e.g. on complete/cancel). */
+/** Cancel a single reminder's notification(s) immediately (e.g. on complete/cancel). */
 export async function cancelScheduled(reminderId: string): Promise<void> {
   const map = await readMap();
-  const osId = map[reminderId];
-  if (osId) {
-    await cancelOne(osId);
+  const osIds = map[reminderId];
+  if (osIds?.length) {
+    await cancelMany(osIds);
     delete map[reminderId];
     await writeMap(map);
   }
