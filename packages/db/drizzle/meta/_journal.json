@@ -29,6 +29,13 @@
       "when": 1783694324456,
       "tag": "0003_thin_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784109786810,
+      "tag": "0004_vengeful_warstar",
+      "breakpoints": true
     }
   ]
 }

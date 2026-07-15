@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, index, integer } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { memories } from "./memories";
 
@@ -17,6 +17,10 @@ export const reminders = pgTable(
       .references(() => users.id),
     text: text("text").notNull(),
     dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    // once: dueAt is the exact fire time. daily/weekly: dueAt's clock time is
+    // the recurring time-of-day (spec: docs/superpowers/specs/2026-07-15-reminder-recurrence-design.md).
+    recurrence: text("recurrence").notNull().default("once"), // once | daily | weekly
+    weekdays: integer("weekdays").array(), // 0(Sun)..6(Sat); set only when recurrence='weekly'
     status: text("status").notNull().default("pending"), // pending | done | dismissed
     origin: text("origin").notNull().default("manual"), // manual | suggested
     sourceMemory: uuid("source_memory").references(() => memories.id), // provenance when AI-suggested
