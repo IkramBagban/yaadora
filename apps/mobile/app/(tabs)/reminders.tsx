@@ -22,7 +22,7 @@ import {
   ensureNotificationPermission,
   hasNotificationPermission,
 } from '../../src/lib/notifications';
-import { dueCountdown, dueGroup, dueLabel } from '../../src/lib/time';
+import { dueCountdown, dueGroup, dueLabel, recurrenceBadge } from '../../src/lib/time';
 import { staggerMs } from '../../src/theme/motion';
 import { hairlineWidth, radius, space } from '../../src/theme/tokens';
 import { useTheme } from '../../src/theme/useTheme';
@@ -72,7 +72,13 @@ export default function RemindersScreen() {
   };
   const openEdit = (r: Reminder) => {
     void Haptics.selectionAsync();
-    setEditTarget({ id: r.id, text: r.text, dueAt: r.dueAt });
+    setEditTarget({
+      id: r.id,
+      text: r.text,
+      dueAt: r.dueAt,
+      recurrence: r.recurrence,
+      weekdays: r.weekdays,
+    });
     setComposerOpen(true);
   };
   useEffect(() => {
@@ -246,6 +252,7 @@ function ReminderCard({
   onCancel: () => void;
 }) {
   const { colors } = useTheme();
+  const badge = recurrenceBadge(reminder);
   return (
     <Animated.View
       entering={FadeInDown.delay(index * staggerMs).springify().damping(18).stiffness(220)}
@@ -275,6 +282,14 @@ function ReminderCard({
           <AppText variant="caption" tone="ink3">
             · {dueCountdown(reminder.dueAt)}
           </AppText>
+          {badge ? (
+            <View style={[styles.recBadge, { backgroundColor: colors.accentSoft }]}>
+              <Feather name="repeat" size={10} color={colors.accent} />
+              <AppText variant="micro" tone="accent">
+                {badge}
+              </AppText>
+            </View>
+          ) : null}
         </View>
       </PressableScale>
       <PressableScale
@@ -393,7 +408,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 1.5,
   },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, flexWrap: 'wrap' },
+  recBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 'auto',
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
   iconBtn: { padding: space.xs },
   suggestTag: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   suggestActions: {

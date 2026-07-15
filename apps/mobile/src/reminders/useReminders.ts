@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { api } from '../api/client';
-import type { Reminder } from '../api/types';
+import type { Recurrence, Reminder } from '../api/types';
 import {
   cancelScheduled,
   ensureNotificationPermission,
@@ -90,17 +90,33 @@ export function useReminders() {
   const refresh = useCallback(() => load('refresh'), [load]);
 
   /** Create a reminder manually; it appears immediately and gets scheduled. */
-  const create = useCallback(async (text: string, dueAt: string) => {
-    const created = await api.createReminder({ text, dueAt });
-    if (!mounted.current) return created;
-    setState((s) => ({ ...s, upcoming: sortByDue([...s.upcoming, created]) }));
-    void ensureNotificationPermission().then(() => scheduleReminder(created));
-    return created;
-  }, []);
+  const create = useCallback(
+    async (input: {
+      text: string;
+      dueAt: string;
+      recurrence?: Recurrence;
+      weekdays?: number[] | null;
+    }) => {
+      const created = await api.createReminder(input);
+      if (!mounted.current) return created;
+      setState((s) => ({ ...s, upcoming: sortByDue([...s.upcoming, created]) }));
+      void ensureNotificationPermission().then(() => scheduleReminder(created));
+      return created;
+    },
+    [],
+  );
 
-  /** Edit a reminder's text/time; reschedules its notification. */
+  /** Edit a reminder's text/time/recurrence; reschedules its notification(s). */
   const update = useCallback(
-    async (id: string, patch: { text?: string; dueAt?: string }) => {
+    async (
+      id: string,
+      patch: {
+        text?: string;
+        dueAt?: string;
+        recurrence?: Recurrence;
+        weekdays?: number[] | null;
+      },
+    ) => {
       const saved = await api.updateReminder(id, patch);
       if (!mounted.current) return saved;
       setState((s) => {

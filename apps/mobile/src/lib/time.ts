@@ -1,5 +1,7 @@
 /** Human time formatting. All inputs are ISO strings from the API or outbox. */
 
+import type { Reminder } from '../api/types';
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -96,4 +98,59 @@ export function dueCountdown(iso: string, now: Date = new Date()): string {
   if (diff < HOUR) return `in ${Math.max(1, Math.round(diff / MINUTE))}m`;
   if (diff < DAY) return `in ${Math.round(diff / HOUR)}h`;
   return `in ${Math.round(diff / DAY)}d`;
+}
+
+// --- recurrence ------------------------------------------------------------
+
+/** Short weekday names, indexed by JS `Date.getDay()` (0 = Sunday … 6 = Saturday). */
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/** The clock time carried by a `dueAt`: "4:00 PM". */
+function timeOfDay(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Unique, in-week-order weekday indices (0–6), ignoring out-of-range values. */
+function orderedWeekdays(weekdays: number[] | null | undefined): number[] {
+  if (!weekdays) return [];
+  return [...new Set(weekdays)].filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b);
+}
+
+/** "Mon, Thu" — selected weekdays in week order. Empty string when none. */
+export function weekdaysShort(weekdays: number[] | null | undefined): string {
+  return orderedWeekdays(weekdays)
+    .map((d) => WEEKDAY_SHORT[d])
+    .join(', ');
+}
+
+/** "Mon" · "Mon & Thu" · "Mon, Wed & Fri" — natural-language weekday list. */
+function weekdaysNatural(weekdays: number[] | null | undefined): string {
+  const names = orderedWeekdays(weekdays).map((d) => WEEKDAY_SHORT[d]);
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+}
+
+/**
+ * Plain-English recurrence summary for a reminder's schedule:
+ * "Every day at 4:00 PM" · "Every Mon & Thu at 8:00 PM". `null` for one-shots.
+ */
+export function recurrenceLabel(
+  reminder: Pick<Reminder, 'recurrence' | 'weekdays' | 'dueAt'>,
+): string | null {
+  const time = timeOfDay(reminder.dueAt);
+  if (reminder.recurrence === 'daily') return `Every day at ${time}`;
+  if (reminder.recurrence === 'weekly') {
+    const days = weekdaysNatural(reminder.weekdays);
+    return days ? `Every ${days} at ${time}` : `Weekly at ${time}`;
+  }
+  return null;
+}
+
+/** Compact badge for a reminder card: "Daily" · "Mon, Thu". `null` for one-shots. */
+export function recurrenceBadge(
+  reminder: Pick<Reminder, 'recurrence' | 'weekdays'>,
+): string | null {
+  if (reminder.recurrence === 'daily') return 'Daily';
+  if (reminder.recurrence === 'weekly') return weekdaysShort(reminder.weekdays) || 'Weekly';
+  return null;
 }
