@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   View,
-  TextInput,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -13,8 +12,12 @@ import Feather from '@expo/vector-icons/Feather';
 import { useSignUp } from '@clerk/expo/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../../src/components/AppText';
+import { AuthField } from '../../src/components/AuthField';
 import { PressableScale } from '../../src/components/PressableScale';
-import { syncDeviceTimezone } from '../../src/auth/syncTimezone';
+import { SocialAuthRow } from '../../src/components/SocialAuthRow';
+import { clerkErrorMessage } from '../../src/auth/clerkError';
+import { enterApp } from '../../src/auth/authFlow';
+import { useSocialAuth } from '../../src/auth/useSocialAuth';
 import { createMobileLogger } from '../../src/lib/log';
 import { fonts, radius, space } from '../../src/theme/tokens';
 import { useTheme } from '../../src/theme/useTheme';
@@ -22,20 +25,6 @@ import { useTheme } from '../../src/theme/useTheme';
 const log = createMobileLogger('auth:sign-up');
 
 type Step = 'credentials' | 'email_code' | 'phone' | 'phone_code';
-
-function clerkErrorMessage(err: unknown, fallback: string): string {
-  if (err && typeof err === 'object') {
-    const e = err as {
-      errors?: Array<{ longMessage?: string; message?: string; code?: string }>;
-      message?: string;
-    };
-    const first = e.errors?.[0];
-    if (first?.longMessage) return first.longMessage;
-    if (first?.message) return first.message;
-    if (e.message) return e.message;
-  }
-  return fallback;
-}
 
 /** Normalize to E.164-ish: digits with leading +. */
 function normalizePhone(raw: string): string {
@@ -50,6 +39,7 @@ export default function SignUpScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isLoaded, signUp, setActive } = useSignUp();
+  const social = useSocialAuth();
 
   const [step, setStep] = useState<Step>('credentials');
   const [email, setEmail] = useState('');
@@ -58,6 +48,12 @@ export default function SignUpScreen() {
   const [code, setCode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const error = localError ?? social.error;
+  const clearError = () => {
+    setLocalError(null);
+    social.clearError();
+  };
 
   const activateAndGo = async (sessionId: string | null | undefined) => {
     if (!sessionId) {
@@ -70,25 +66,17 @@ export default function SignUpScreen() {
       setLocalError('Auth is not ready. Try again in a moment.');
       return;
     }
-    log.info('activating session after sign-up', {
-      sessionIdPrefix: sessionId.slice(0, 12),
-    });
     await setActive({ session: sessionId });
-    void syncDeviceTimezone();
-    router.replace('/(tabs)' as Href);
+    enterApp(router);
   };
 
-  /**
-   * After any sign-up mutation, either finish or advance to the next required step.
-   */
+  /** After any sign-up mutation, either finish or advance to the next required step. */
   const advanceFromStatus = async () => {
     if (!signUp) return;
-
     log.info('advanceFromStatus', {
       status: signUp.status,
       missingFields: signUp.missingFields,
       unverifiedFields: signUp.unverifiedFields,
-      hasSession: Boolean(signUp.createdSessionId),
     });
 
     if (signUp.status === 'complete') {
@@ -104,13 +92,11 @@ export default function SignUpScreen() {
       setCode('');
       return;
     }
-
     if (missing.includes('phone_number')) {
       setStep('phone');
       setLocalError(null);
       return;
     }
-
     if (unverified.includes('phone_number')) {
       setStep('phone_code');
       setCode('');
@@ -119,7 +105,7 @@ export default function SignUpScreen() {
 
     const msg = `Sign-up incomplete (status: ${signUp.status ?? 'unknown'}). Missing: ${
       missing.join(', ') || unverified.join(', ') || 'unknown'
-    }. In Clerk Dashboard, turn off unused required fields (e.g. phone).`;
+    }.`;
     log.warn(msg);
     setLocalError(msg);
   };
@@ -129,7 +115,7 @@ export default function SignUpScreen() {
       log.warn('sign-up pressed before Clerk ready', { isLoaded, hasSignUp: Boolean(signUp) });
       return;
     }
-    setLocalError(null);
+    clearError();
     const trimmed = email.trim();
     if (!trimmed || !password) {
       setLocalError('Enter an email and password.');
@@ -143,13 +129,9 @@ export default function SignUpScreen() {
     setBusy(true);
     log.info('sign-up attempt', { email: trimmed });
     try {
-      const created = await signUp.create({
-        emailAddress: trimmed,
-        password,
-      });
+      const created = await signUp.create({ emailAddress: trimmed, password });
       log.info('sign-up create result', {
         status: created.status,
-        missingFields: created.missingFields,
         unverifiedFields: created.unverifiedFields,
       });
 
@@ -158,10 +140,8 @@ export default function SignUpScreen() {
         return;
       }
 
-      // Prefer email verification first when Clerk asks for it.
       if ((created.unverifiedFields ?? []).includes('email_address')) {
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
-        log.info('verification email requested (email_code)');
         setStep('email_code');
         setCode('');
         return;
@@ -170,10 +150,7 @@ export default function SignUpScreen() {
       await advanceFromStatus();
     } catch (err) {
       const message = clerkErrorMessage(err, 'Could not create account.');
-      log.error('sign-up failed', {
-        message,
-        raw: err instanceof Error ? err.message : String(err),
-      });
+      log.error('sign-up failed', { message, raw: err instanceof Error ? err.message : String(err) });
       setLocalError(message);
     } finally {
       setBusy(false);
@@ -182,39 +159,24 @@ export default function SignUpScreen() {
 
   const onVerifyEmail = async () => {
     if (!isLoaded || !signUp) return;
-    setLocalError(null);
+    clearError();
     if (!code.trim()) {
       setLocalError('Enter the verification code from your email.');
       return;
     }
 
     setBusy(true);
-    log.info('verifying email code', { codeLen: code.trim().length });
     try {
-      const result = await signUp.attemptEmailAddressVerification({
-        code: code.trim(),
-      });
-
-      log.info('email verify result', {
-        status: result.status,
-        hasSession: Boolean(result.createdSessionId),
-        missingFields: result.missingFields,
-        unverifiedFields: result.unverifiedFields,
-      });
-
+      const result = await signUp.attemptEmailAddressVerification({ code: code.trim() });
+      log.info('email verify result', { status: result.status });
       if (result.status === 'complete') {
         await activateAndGo(result.createdSessionId);
         return;
       }
-
-      // Email ok, but Clerk still needs phone (common dashboard default).
       await advanceFromStatus();
     } catch (err) {
       const message = clerkErrorMessage(err, 'Invalid verification code.');
-      log.error('email verify failed', {
-        message,
-        raw: err instanceof Error ? err.message : String(err),
-      });
+      log.error('email verify failed', { message });
       setLocalError(message);
     } finally {
       setBusy(false);
@@ -223,7 +185,7 @@ export default function SignUpScreen() {
 
   const onSubmitPhone = async () => {
     if (!isLoaded || !signUp) return;
-    setLocalError(null);
+    clearError();
     const e164 = normalizePhone(phone);
     if (e164.length < 8) {
       setLocalError('Enter a phone number with country code (e.g. +9198…).');
@@ -231,35 +193,22 @@ export default function SignUpScreen() {
     }
 
     setBusy(true);
-    log.info('submitting phone number', { phoneLen: e164.length });
     try {
       const updated = await signUp.update({ phoneNumber: e164 });
-      log.info('phone update result', {
-        status: updated.status,
-        missingFields: updated.missingFields,
-        unverifiedFields: updated.unverifiedFields,
-      });
-
       if (updated.status === 'complete') {
         await activateAndGo(updated.createdSessionId);
         return;
       }
-
       if ((updated.unverifiedFields ?? []).includes('phone_number')) {
         await signUp.preparePhoneNumberVerification({ strategy: 'phone_code' });
-        log.info('phone verification SMS requested');
         setStep('phone_code');
         setCode('');
         return;
       }
-
       await advanceFromStatus();
     } catch (err) {
       const message = clerkErrorMessage(err, 'Could not save phone number.');
-      log.error('phone update failed', {
-        message,
-        raw: err instanceof Error ? err.message : String(err),
-      });
+      log.error('phone update failed', { message });
       setLocalError(message);
     } finally {
       setBusy(false);
@@ -268,29 +217,19 @@ export default function SignUpScreen() {
 
   const onVerifyPhone = async () => {
     if (!isLoaded || !signUp) return;
-    setLocalError(null);
+    clearError();
     if (!code.trim()) {
       setLocalError('Enter the SMS verification code.');
       return;
     }
 
     setBusy(true);
-    log.info('verifying phone code', { codeLen: code.trim().length });
     try {
-      const result = await signUp.attemptPhoneNumberVerification({
-        code: code.trim(),
-      });
-      log.info('phone verify result', {
-        status: result.status,
-        hasSession: Boolean(result.createdSessionId),
-        missingFields: result.missingFields,
-      });
-
+      const result = await signUp.attemptPhoneNumberVerification({ code: code.trim() });
       if (result.status === 'complete') {
         await activateAndGo(result.createdSessionId);
         return;
       }
-
       await advanceFromStatus();
     } catch (err) {
       const message = clerkErrorMessage(err, 'Invalid SMS code.');
@@ -303,16 +242,12 @@ export default function SignUpScreen() {
 
   const onResendEmail = async () => {
     if (!signUp) return;
-    setLocalError(null);
+    clearError();
     setBusy(true);
-    log.info('resend email verification code');
     try {
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
-      log.info('verification email re-sent');
     } catch (err) {
-      const message = clerkErrorMessage(err, 'Could not resend code.');
-      log.error('resend email failed', { message });
-      setLocalError(message);
+      setLocalError(clerkErrorMessage(err, 'Could not resend code.'));
     } finally {
       setBusy(false);
     }
@@ -320,16 +255,12 @@ export default function SignUpScreen() {
 
   const onResendPhone = async () => {
     if (!signUp) return;
-    setLocalError(null);
+    clearError();
     setBusy(true);
-    log.info('resend phone verification code');
     try {
       await signUp.preparePhoneNumberVerification({ strategy: 'phone_code' });
-      log.info('phone SMS re-sent');
     } catch (err) {
-      const message = clerkErrorMessage(err, 'Could not resend SMS.');
-      log.error('resend phone failed', { message });
-      setLocalError(message);
+      setLocalError(clerkErrorMessage(err, 'Could not resend SMS.'));
     } finally {
       setBusy(false);
     }
@@ -341,7 +272,7 @@ export default function SignUpScreen() {
       : step === 'email_code'
         ? 'Enter the code we emailed you.'
         : step === 'phone'
-          ? 'Your Clerk app requires a phone number to finish sign-up.'
+          ? 'Add a phone number to finish sign-up.'
           : 'Enter the code we texted you.';
 
   const primaryLabel =
@@ -381,18 +312,8 @@ export default function SignUpScreen() {
 
         {step === 'credentials' ? (
           <>
-            <AppText variant="captionMedium" tone="ink2" style={styles.label}>
-              Email
-            </AppText>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: colors.ink,
-                  backgroundColor: colors.surface,
-                  borderColor: colors.hairline,
-                },
-              ]}
+            <AuthField
+              label="Email"
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
@@ -401,95 +322,63 @@ export default function SignUpScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="you@example.com"
-              placeholderTextColor={colors.ink3}
               editable={!busy}
             />
-
-            <AppText variant="captionMedium" tone="ink2" style={styles.label}>
-              Password
-            </AppText>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: colors.ink,
-                  backgroundColor: colors.surface,
-                  borderColor: colors.hairline,
-                },
-              ]}
-              secureTextEntry
+            <AuthField
+              label="Password"
+              password
               textContentType="newPassword"
               autoComplete="new-password"
               value={password}
               onChangeText={setPassword}
               placeholder="At least 8 characters"
-              placeholderTextColor={colors.ink3}
               editable={!busy}
             />
           </>
         ) : null}
 
         {step === 'email_code' || step === 'phone_code' ? (
-          <>
-            <AppText variant="captionMedium" tone="ink2" style={styles.label}>
-              {step === 'email_code' ? 'Email code' : 'SMS code'}
-            </AppText>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: colors.ink,
-                  backgroundColor: colors.surface,
-                  borderColor: colors.hairline,
-                },
-              ]}
-              keyboardType="number-pad"
-              textContentType="oneTimeCode"
-              value={code}
-              onChangeText={setCode}
-              placeholder="123456"
-              placeholderTextColor={colors.ink3}
-              editable={!busy}
-            />
-          </>
+          <AuthField
+            label={step === 'email_code' ? 'Email code' : 'SMS code'}
+            keyboardType="number-pad"
+            textContentType="oneTimeCode"
+            value={code}
+            onChangeText={setCode}
+            placeholder="123456"
+            editable={!busy}
+          />
         ) : null}
 
         {step === 'phone' ? (
           <>
-            <AppText variant="captionMedium" tone="ink2" style={styles.label}>
-              Phone (with country code)
-            </AppText>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: colors.ink,
-                  backgroundColor: colors.surface,
-                  borderColor: colors.hairline,
-                },
-              ]}
+            <AuthField
+              label="Phone (with country code)"
               keyboardType="phone-pad"
               textContentType="telephoneNumber"
               autoComplete="tel"
               value={phone}
               onChangeText={setPhone}
               placeholder="+919876543210"
-              placeholderTextColor={colors.ink3}
               editable={!busy}
             />
-            <AppText variant="caption" tone="ink3">
-              Tip: in Clerk Dashboard you can turn off “Phone number” as required if you only want
-              email sign-up.
+            <AppText variant="caption" tone="ink3" style={styles.hint}>
+              You can turn off required phone numbers in the Clerk dashboard if you only want email
+              sign-up.
             </AppText>
           </>
         ) : null}
 
-        {localError ? (
-          <View style={[styles.errorChip, { backgroundColor: colors.danger + '15', borderColor: colors.danger + '30' }]}>
+        {error ? (
+          <View
+            style={[
+              styles.errorChip,
+              { backgroundColor: colors.danger + '15', borderColor: colors.danger + '30' },
+            ]}
+          >
             <AppText variant="caption" tone="danger" style={{ flex: 1 }}>
-              {localError}
+              {error}
             </AppText>
-            <PressableScale onPress={() => setLocalError(null)} hitSlop={12}>
+            <PressableScale onPress={clearError} hitSlop={12}>
               <Feather name="x" size={16} color={colors.danger} />
             </PressableScale>
           </View>
@@ -500,10 +389,7 @@ export default function SignUpScreen() {
           accessibilityLabel={primaryLabel}
           onPress={onPrimary}
           disabled={busy || !isLoaded}
-          style={[
-            styles.button,
-            { backgroundColor: colors.accent, opacity: busy ? 0.6 : 1 },
-          ]}
+          style={[styles.button, { backgroundColor: colors.accent, opacity: busy ? 0.6 : 1 }]}
         >
           {busy ? (
             <ActivityIndicator color={colors.onAccent} />
@@ -515,11 +401,7 @@ export default function SignUpScreen() {
         </PressableScale>
 
         {step === 'email_code' ? (
-          <PressableScale
-            accessibilityRole="button"
-            onPress={() => void onResendEmail()}
-            style={styles.secondary}
-          >
+          <PressableScale accessibilityRole="button" onPress={() => void onResendEmail()} style={styles.secondary}>
             <AppText variant="caption" tone="accent">
               Resend email code
             </AppText>
@@ -527,29 +409,31 @@ export default function SignUpScreen() {
         ) : null}
 
         {step === 'phone_code' ? (
-          <PressableScale
-            accessibilityRole="button"
-            onPress={() => void onResendPhone()}
-            style={styles.secondary}
-          >
+          <PressableScale accessibilityRole="button" onPress={() => void onResendPhone()} style={styles.secondary}>
             <AppText variant="caption" tone="accent">
               Resend SMS code
             </AppText>
           </PressableScale>
         ) : null}
 
-        <View style={styles.footer}>
-          <AppText variant="caption" tone="ink2">
-            Already have an account?{' '}
-          </AppText>
-          <Link href={'/(auth)/sign-in' as Href} asChild>
-            <PressableScale accessibilityRole="link">
-              <AppText variant="caption" tone="accent">
-                Sign in
+        {step === 'credentials' ? (
+          <>
+            <SocialAuthRow onSelect={social.signInWith} pending={social.pending} disabled={busy} />
+
+            <View style={styles.footer}>
+              <AppText variant="caption" tone="ink2">
+                Already have an account?{' '}
               </AppText>
-            </PressableScale>
-          </Link>
-        </View>
+              <Link href={'/(auth)/sign-in' as Href} asChild>
+                <PressableScale accessibilityRole="link">
+                  <AppText variant="caption" tone="accent">
+                    Sign in
+                  </AppText>
+                </PressableScale>
+              </Link>
+            </View>
+          </>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -569,16 +453,8 @@ const styles = StyleSheet.create({
   subtitle: {
     marginBottom: space.lg,
   },
-  label: {
-    marginTop: space.sm,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm + 2,
-    fontSize: 16,
-    fontFamily: fonts.sans,
+  hint: {
+    marginTop: space.xs,
   },
   errorChip: {
     marginTop: space.xs,

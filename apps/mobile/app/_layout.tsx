@@ -104,6 +104,10 @@ function RootNavigator() {
           name="memory/[id]"
           options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
         />
+        <Stack.Screen
+          name="profile"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
       </Stack>
       <StatusBar style={dark ? 'light' : 'dark'} />
     </>

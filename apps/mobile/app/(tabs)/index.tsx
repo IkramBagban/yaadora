@@ -6,7 +6,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
@@ -19,7 +19,6 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useClerk } from '@clerk/expo';
 import { enqueueMemory } from '../../src/capture/outbox';
 import { useOutbox } from '../../src/capture/useOutbox';
 import { useRecentMemories } from '../../src/capture/useRecentMemories';
@@ -59,7 +58,6 @@ export default function CaptureScreen() {
   const { colors, dark } = useTheme();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible();
-  const { signOut } = useClerk();
 
   const [text, setText] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
@@ -152,11 +150,11 @@ export default function CaptureScreen() {
               </PressableScale>
               <PressableScale
                 accessibilityRole="button"
-                accessibilityLabel="Sign out"
-                onPress={() => void signOut()}
+                accessibilityLabel="Account"
+                onPress={() => router.push('/profile' as Href)}
                 hitSlop={12}
               >
-                <Feather name="log-out" size={18} color={colors.ink2} />
+                <Feather name="user" size={18} color={colors.ink2} />
               </PressableScale>
             </View>
           </View>
