@@ -19,7 +19,11 @@ import {
   listConversations,
   postConversationTurn,
 } from "./routes/conversations";
-import { postSurfacingReaction } from "./routes/surfacings";
+import {
+  listSurfacings,
+  getSurfacingEvidence,
+  postSurfacingReaction,
+} from "./routes/surfacings";
 import { registerPushToken } from "./routes/push-tokens";
 import {
   getPrivacySettings,
@@ -107,6 +111,12 @@ const server = Bun.serve({
     },
     "/conversations/:id/turns": {
       POST: (req) => postConversationTurn(req, req.params.id),
+    },
+    "/surfacings": {
+      GET: (req) => listSurfacings(req),
+    },
+    "/surfacings/:id/evidence": {
+      GET: (req) => getSurfacingEvidence(req, req.params.id),
     },
     "/surfacings/:id/reaction": {
       POST: (req) => postSurfacingReaction(req, req.params.id),

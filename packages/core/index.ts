@@ -6,6 +6,7 @@ export {
   embeddingModel,
   AI_PROVIDER,
 } from "./ai/models";
+// fastModel stays internal to core (awareness / matcher / push copy).
 
 // The BullMQ queue contract (spec 01 §2) — enqueue on the server, process on
 // the worker. Shared here so producer/consumer can't drift.
@@ -104,3 +105,39 @@ export type {
   RuleEditInput,
   RuleEditResult,
 } from "./retrieval";
+
+// Proactive brain (spec 02 §5.4, §3.3, §6) — gates + awareness + push helpers.
+export {
+  runGates,
+  gateLedger,
+  gateAlreadyKnown,
+  gateSeam,
+  gateEvidence,
+  gateBudget,
+  isInQuietHours,
+  localDateString,
+  localDaysUntil,
+  localMinutesOfDay,
+  isPrepTypeTitle,
+  hardBlockMidTask,
+  P2_ENABLED_KINDS,
+  IGNORED_COOLDOWN_DAYS,
+  runAwarenessPass,
+  AWARENESS_DEADLINE_MS,
+  loadAwarenessCandidates,
+  evaluateAndRecord,
+  scanProspectionCandidates,
+  userHadConversationToday,
+  loadUserBudgetSettings,
+  generatePushCopy,
+  sendExpoPush,
+} from "./proactive";
+export type {
+  NudgeCandidate,
+  GateInput,
+  GateOutcome,
+  Seam,
+  Channel,
+  AwarenessPassResult,
+  AwarenessAttachment,
+} from "./proactive";

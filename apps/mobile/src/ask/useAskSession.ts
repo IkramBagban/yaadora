@@ -27,6 +27,9 @@ export interface Exchange {
   error: string | null;
   /** A reminder the server proposed for this turn (one-tap chip). Null if none. */
   reminderSuggestion: ReminderSuggestion | null;
+  /** Proactive nudge woven this turn — receipt affordance (P2). */
+  surfacingId: string | null;
+  evidence: string[];
 }
 
 function makeExchange(question: string): Exchange {
@@ -43,6 +46,8 @@ function makeExchange(question: string): Exchange {
     status: 'streaming',
     error: null,
     reminderSuggestion: null,
+    surfacingId: null,
+    evidence: [],
   };
 }
 
@@ -133,6 +138,8 @@ export function useAskSession() {
                 steps: event.steps ?? [],
                 clarifyOptions: event.clarifyOptions ?? [],
                 liveStep: null,
+                surfacingId: event.surfacingId ?? null,
+                evidence: event.evidence ?? [],
               });
             } else if (event.type === 'reminder_suggestion') {
               patch(exchangeId, {
@@ -200,6 +207,8 @@ export function useAskSession() {
         status: 'streaming',
         error: null,
         reminderSuggestion: null,
+        surfacingId: null,
+        evidence: [],
       });
       void run(id, question);
     },

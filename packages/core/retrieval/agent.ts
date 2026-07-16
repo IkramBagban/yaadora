@@ -16,6 +16,7 @@ import { REFUSAL_TEXT, type Citation } from "./answer";
 import {
   assembleContextPack,
   buildContextPackText,
+  type NudgeDirective,
   type RuleSlot,
 } from "./context-pack";
 import {
@@ -23,6 +24,13 @@ import {
   shortRuleName,
   type MatchedRule,
 } from "./rule-matcher";
+import {
+  evaluateAndRecord,
+  loadAwarenessCandidates,
+  loadPriorSurfacingIds,
+  markSurfacingEngaged,
+  runAwarenessPass,
+} from "../proactive";
 
 const log = createLogger("retrieval:agent");
 
@@ -63,8 +71,16 @@ export interface AskResult {
   clarifyOptions?: string[];
   /** standing rules applied this turn (meta.ruleIdsApplied) */
   ruleIdsApplied: string[];
-  /** ledger rows written for rule applications (meta.surfacingIds) */
+  /**
+   * Ledger rows for this turn: rule_applied + any woven nudge (meta.surfacingIds).
+   * Spec 02 §2.1 / §5.4.
+   */
   surfacingIds: string[];
+  /**
+   * When a proactive nudge was woven into the reply: the ledger id + evidence
+   * memory ids for the mobile receipt affordance (SSE `done` payload).
+   */
+  nudge?: { surfacingId: string; evidence: string[] } | null;
 }
 
 export interface AskHandle {
@@ -219,12 +235,23 @@ export async function answerQuestion(params: {
   const previousUserTurn =
     [...history].reverse().find((h) => h.role === "user")?.content ?? null;
 
-  // Pack SQL + rule matcher run concurrently so matching adds no serial latency
-  // (spec 02 §5.1). Either failure is non-fatal for the Ask turn.
+  // Pack SQL + rule matcher + awareness pass run concurrently so matching /
+  // proactivity add no serial latency (spec 02 §5.1, §5.4). Failures are
+  // non-fatal for the Ask turn.
   let matchedRules: MatchedRule[] = [];
   let contextPackText = "";
+  /** Gate-approved nudge woven this turn (receipt affordance). */
+  let wovenNudge: { surfacingId: string; evidence: string[] } | null = null;
+  /** Nudge ledger id (merged into AskResult.surfacingIds with rules). */
+  let nudgeSurfacingId: string | null = null;
+
   try {
-    const [matched, pack] = await Promise.all([
+    const recentTurns = history.slice(-6).map((h) => ({
+      role: h.role,
+      content: h.content,
+    }));
+
+    const [matched, pack, awarenessBundle] = await Promise.all([
       matchStandingRules({
         userId,
         userTurn: question,
@@ -234,31 +261,87 @@ export async function answerQuestion(params: {
         log.warn("context pack assembly failed; continuing without it", err as Error);
         return null;
       }),
+      // Awareness: load candidates + prior ids, then one fast-tier call ≤800ms.
+      (async () => {
+        try {
+          const [candidates, priorSurfacingIds] = await Promise.all([
+            loadAwarenessCandidates({ userId, now }),
+            loadPriorSurfacingIds({ userId, conversationId }),
+          ]);
+          const awareness = await runAwarenessPass({
+            userTurn: question,
+            recentTurns,
+            candidates,
+            priorSurfacingIds,
+          });
+          return { awareness, candidates };
+        } catch (err) {
+          log.warn("awareness setup failed; continuing without nudge", err as Error);
+          return null;
+        }
+      })(),
     ]);
     matchedRules = matched;
+
+    // Reaction capture for last turn's nudge (best-effort).
+    if (awarenessBundle?.awareness.engagedWithPrior) {
+      void markSurfacingEngaged(awarenessBundle.awareness.engagedWithPrior).catch(
+        (err) => log.warn("failed to mark surfacing engaged", err as Error),
+      );
+    }
+
+    // Candidate → gates → approved: pending ledger row + pack directive.
+    let nudgeDirective: NudgeDirective | null = null;
+    const aw = awarenessBundle?.awareness;
+    if (aw?.candidate && !aw.timedOut) {
+      try {
+        const gated = await evaluateAndRecord({
+          userId,
+          conversationId,
+          candidate: aw.candidate,
+          seam: aw.seam,
+          channel: "conversation",
+          now,
+        });
+        if (gated.approved && gated.surfacingId) {
+          nudgeDirective = {
+            text: aw.candidate.oneLineNudge,
+            evidence: aw.candidate.evidence,
+          };
+          wovenNudge = {
+            surfacingId: gated.surfacingId,
+            evidence: aw.candidate.evidence,
+          };
+          nudgeSurfacingId = gated.surfacingId;
+        }
+      } catch (err) {
+        log.warn("nudge gate/record failed; continuing without nudge", err as Error);
+      }
+    }
+
+    const ruleSlots: RuleSlot[] = matchedRules.map((r) => ({
+      id: r.id,
+      ruleText: r.ruleText,
+    }));
+
     if (pack) {
-      const ruleSlots: RuleSlot[] = matchedRules.map((r) => ({
-        id: r.id,
-        ruleText: r.ruleText,
-      }));
-      // Re-budget with matched rules filling the RuleSlot (renderRules already
-      // present; budget contract unchanged — spec 02 §4).
+      // Re-budget with matched rules + optional nudge (renderNudge already
+      // present; budget contract unchanged — rules > nudge > loops… — §4).
       const { text } = buildContextPackText({
         profile: pack.profile,
         weekDigest: pack.weekDigest,
         loops: pack.loops,
         rules: ruleSlots,
-        nudge: pack.nudge,
+        nudge: nudgeDirective,
       });
       contextPackText = text;
-    } else if (matchedRules.length) {
-      // Pack SQL failed but rules matched — still inject rules alone.
+    } else if (matchedRules.length || nudgeDirective) {
       const { text } = buildContextPackText({
         profile: null,
         weekDigest: null,
         loops: [],
-        rules: matchedRules.map((r) => ({ id: r.id, ruleText: r.ruleText })),
-        nudge: null,
+        rules: ruleSlots,
+        nudge: nudgeDirective,
       });
       contextPackText = text;
     }
@@ -270,7 +353,7 @@ export async function answerQuestion(params: {
         "(use the rule's own wording as short headings) before any other advice.";
     }
   } catch (err) {
-    log.warn("pack/matcher setup failed; continuing without pack", err as Error);
+    log.warn("pack/matcher/awareness setup failed; continuing without pack", err as Error);
   }
 
   // Shared, mutable state accumulated across tool calls (groundedness lives here).
@@ -451,6 +534,10 @@ export async function answerQuestion(params: {
 
     const finalize = () => {
       if (!clarified) mode = searchCount > 1 ? "reason" : "recall";
+      const surfacingIds = [
+        ...applied.surfacingIds,
+        ...(nudgeSurfacingId ? [nudgeSurfacingId] : []),
+      ];
       resolveResult({
         citations: clarified ? [] : Array.from(citeMap.values()),
         confidence: clarified ? 0 : topRelevance,
@@ -458,7 +545,8 @@ export async function answerQuestion(params: {
         steps,
         clarifyOptions,
         ruleIdsApplied: applied.ruleIdsApplied,
-        surfacingIds: applied.surfacingIds,
+        surfacingIds,
+        nudge: wovenNudge,
       });
     };
 

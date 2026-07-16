@@ -3,6 +3,7 @@ import { useAuth } from '@clerk/expo';
 import { setAuthTokenGetter } from '../api/token';
 import { flushOutbox } from '../capture/outbox';
 import { createMobileLogger } from '../lib/log';
+import { registerPushTokenOnLogin } from '../lib/pushRegistration';
 
 const log = createMobileLogger('auth:token');
 
@@ -55,6 +56,8 @@ export function ClerkTokenBridge() {
     if (isSignedIn) {
       log.info('flushing outbox after sign-in');
       void flushOutbox();
+      // Server-initiated push (P2): register device token + request permission.
+      void registerPushTokenOnLogin();
     }
   }, [isSignedIn]);
 

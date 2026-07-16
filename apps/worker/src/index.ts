@@ -15,6 +15,10 @@ import {
   scheduleConversationMaintenance,
   startConversationMaintenanceWorker,
 } from "./conversation-maintenance";
+import {
+  scheduleProspection,
+  startProspectionWorker,
+} from "./prospection";
 import { registerReprocessWorker } from "./reprocess";
 
 // Declare this process's log target FIRST — every log line (including those
@@ -139,6 +143,14 @@ scheduleConversationMaintenance()
   .then(() => log.info("conversation maintenance scheduled"))
   .catch((err) => log.error("could not schedule conversation maintenance", err));
 
+// --- Prospection (daily foresight, morning local time) — P2 -----------------
+// Append-only: module owns its queue/worker; do not fold into shared registration.
+const prospectionWorker = startProspectionWorker();
+
+scheduleProspection()
+  .then(() => log.info("prospection scheduled"))
+  .catch((err) => log.error("could not schedule prospection", err));
+
 // Graceful shutdown so in-flight jobs finish and connections close cleanly.
 async function shutdown(signal: string) {
   log.info("shutdown signal received — closing workers", { signal });
@@ -146,6 +158,7 @@ async function shutdown(signal: string) {
     worker.close(),
     consolidationWorker.close(),
     conversationMaintenanceWorker.close(),
+    prospectionWorker.close(),
     reprocessWorker.close(),
   ]);
   process.exit(0);
@@ -153,4 +166,6 @@ async function shutdown(signal: string) {
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-log.info("starting ingestion + consolidation + conversation-maintenance + reprocess workers");
+log.info(
+  "starting ingestion + consolidation + conversation-maintenance + prospection + reprocess workers",
+);

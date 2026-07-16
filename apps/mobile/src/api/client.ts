@@ -6,11 +6,13 @@ import type {
   MemoryDetail,
   MemoryPage,
   MemorySource,
+  PendingSurfacing,
   Recurrence,
   Reminder,
   ReminderList,
   ReminderScope,
   StandingRule,
+  SurfacingEvidenceMemory,
 } from './types';
 
 const log = createMobileLogger('api');
@@ -241,6 +243,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reaction }),
     });
+  },
+
+  /** App-open suggestion chips (spec 02 §6, P2). */
+  listSurfacings(params: {
+    status?: 'pending';
+    channel?: 'conversation' | 'push' | 'chip';
+    limit?: number;
+  } = {}): Promise<{ surfacings: PendingSurfacing[] }> {
+    const q = new URLSearchParams();
+    if (params.status) q.set('status', params.status);
+    if (params.channel) q.set('channel', params.channel);
+    if (params.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return request(`/surfacings${qs ? `?${qs}` : ''}`);
+  },
+
+  getSurfacingEvidence(
+    id: string,
+  ): Promise<{ id: string; memories: SurfacingEvidenceMemory[] }> {
+    return request(`/surfacings/${encodeURIComponent(id)}/evidence`);
   },
 
   createMemory(input: {

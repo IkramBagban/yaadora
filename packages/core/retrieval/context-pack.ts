@@ -6,8 +6,8 @@ import { getDigest, getDueOpenLoops } from "@repo/db";
  * the only door into memory (spec 01 D8).
  *
  * Pack slots: profile summary + 7-day digest + near-dated open loops + matched
- * standing rules (P1, filled by the rule matcher and passed in or re-budgeted in
- * the agent) + nudge directive (P2 stub until prospection lands).
+ * standing rules (P1, filled by the rule matcher) + nudge directive (P2,
+ * awareness pass + gates).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
  *   rules > nudge > dated loops > digest > profile
@@ -67,7 +67,7 @@ export interface ContextPackSlots {
   loops: LoopLine[];
   /** Matched standing rules (0–3). Filled by the rule matcher (spec 02 §5.1). */
   rules: RuleSlot[];
-  /** P2 stub — always null until prospection / awareness pass lands. */
+  /** Gate-approved nudge directive (0–1). Filled by awareness + gates (P2). */
   nudge: NudgeDirective | null;
 }
 
@@ -219,7 +219,8 @@ export async function assembleContextPack(
     dueAt: l.dueAt,
   }));
   const rules: RuleSlot[] = matchedRules;
-  const nudge: NudgeDirective | null = null; // P2 stub
+  // Nudge is filled by the agent after the awareness pass + gates (spec 02 §5.4).
+  const nudge: NudgeDirective | null = null;
 
   const slots: ContextPackSlots = { profile, weekDigest, loops, rules, nudge };
   const { text, estimatedTokens } = buildContextPackText(slots);

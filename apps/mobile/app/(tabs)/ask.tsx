@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -14,6 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Feather from '@expo/vector-icons/Feather';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { api } from '../../src/api/client';
+import type { PendingSurfacing } from '../../src/api/types';
 import { enqueueMemory } from '../../src/capture/outbox';
 import { useAskSession } from '../../src/ask/useAskSession';
 import { AppText } from '../../src/components/AppText';
@@ -51,9 +53,30 @@ export default function AskScreen() {
   const [draft, setDraft] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** App-open suggestion chips from pending channel=chip surfacings (P2). */
+  const [chipSurfacings, setChipSurfacings] = useState<PendingSurfacing[]>([]);
 
   const { exchanges, streaming, send, retry, cancel, reset } = useAskSession();
   const hasSession = exchanges.length > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.listSurfacings({
+          status: 'pending',
+          channel: 'chip',
+          limit: 5,
+        });
+        if (!cancelled) setChipSurfacings(res.surfacings ?? []);
+      } catch {
+        if (!cancelled) setChipSurfacings([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const submit = (value?: string) => {
     const q = (value ?? draft).trim();
@@ -129,11 +152,38 @@ export default function AskScreen() {
                 </AppText>
               </Animated.View>
               <View style={styles.suggestions}>
+                {chipSurfacings.map((s, i) => {
+                  const label =
+                    s.evidenceSnippets[0] ??
+                    (s.kind === 'date_nudge'
+                      ? 'Something coming up soon'
+                      : 'A note from your memory');
+                  return (
+                    <SuggestionChip
+                      key={s.id}
+                      label={label}
+                      index={i}
+                      onPress={() => {
+                        void api
+                          .postSurfacingReaction(s.id, 'engaged')
+                          .catch(() => {});
+                        setChipSurfacings((list) =>
+                          list.filter((x) => x.id !== s.id),
+                        );
+                        submit(
+                          s.kind === 'date_nudge'
+                            ? `Tell me more about this: ${label}`
+                            : `What's this about: ${label}`,
+                        );
+                      }}
+                    />
+                  );
+                })}
                 {SUGGESTIONS.map((suggestion, i) => (
                   <SuggestionChip
                     key={suggestion}
                     label={suggestion}
-                    index={i}
+                    index={i + chipSurfacings.length}
                     onPress={() => submit(suggestion)}
                   />
                 ))}

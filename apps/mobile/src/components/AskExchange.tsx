@@ -9,6 +9,7 @@ import { AppText } from './AppText';
 import { Caret } from './Caret';
 import { CitationChip } from './CitationChip';
 import { ErrorState } from './ErrorState';
+import { NudgeReceipt } from './NudgeReceipt';
 import { PressableScale } from './PressableScale';
 import { ReasonedTrace } from './ReasonedTrace';
 import { ReminderChip } from './ReminderChip';
@@ -138,6 +139,13 @@ export function AskExchange({
 
           {exchange.reminderSuggestion && (
             <ReminderChip suggestion={exchange.reminderSuggestion} />
+          )}
+
+          {exchange.surfacingId && (
+            <NudgeReceipt
+              surfacingId={exchange.surfacingId}
+              evidenceIds={exchange.evidence}
+            />
           )}
 
           {clarify && exchange.clarifyOptions.length > 0 && (

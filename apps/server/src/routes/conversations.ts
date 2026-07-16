@@ -274,6 +274,13 @@ export async function streamConversationTurn(params: {
           mode: final.mode,
           steps: final.steps,
           ...(final.clarifyOptions ? { clarifyOptions: final.clarifyOptions } : {}),
+          // Receipt affordance when a proactive nudge was woven (P2).
+          ...(final.nudge
+            ? {
+                surfacingId: final.nudge.surfacingId,
+                evidence: final.nudge.evidence,
+              }
+            : {}),
         });
 
         const assistantContent = fullText.trim() || "(no response)";

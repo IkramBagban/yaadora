@@ -161,10 +161,33 @@ export type AskEvent =
       mode: AskMode;
       steps: AskStep[];
       clarifyOptions?: string[];
+      /** Proactive nudge woven this turn (receipt affordance, P2). */
+      surfacingId?: string;
+      evidence?: string[];
     }
   | { type: 'captured'; memoryId: string; statement: string }
   | { type: 'reminder_suggestion'; text: string; dueAt: string; sourceMemoryId?: string }
   | { type: 'error'; message: string };
+
+/** GET /surfacings — pending chip candidates on app open. */
+export interface PendingSurfacing {
+  id: string;
+  kind: string;
+  subjectType: string;
+  subjectId: string;
+  channel: string;
+  evidence: string[];
+  evidenceSnippets: string[];
+  shownAt: string;
+  reaction: string | null;
+}
+
+export interface SurfacingEvidenceMemory {
+  id: string;
+  rawText: string;
+  occurredAt: string | null;
+  createdAt: string;
+}
 
 /** A transient reminder chip proposed during an Ask turn (not yet saved). */
 export interface ReminderSuggestion {
