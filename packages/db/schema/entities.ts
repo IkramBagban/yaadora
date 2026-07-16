@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   vector,
+  jsonb,
   index,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
@@ -33,6 +34,9 @@ export const entities = pgTable(
     firstSeen: timestamp("first_seen", { withTimezone: true }),
     lastSeen: timestamp("last_seen", { withTimezone: true }),
     mentionCount: integer("mention_count").notNull().default(0),
+    // Extraction-populated attributes (spec 02 §2.6), e.g. {"birthday": "1998-03-12"}.
+    // Provenance for each attribute lives in `facts`.
+    attributes: jsonb("attributes"),
   },
   (t) => [
     index("entities_user_type_idx").on(t.userId, t.type),
