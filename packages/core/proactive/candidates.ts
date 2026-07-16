@@ -19,6 +19,7 @@ import {
 import { createLogger } from "@repo/logger";
 import type { AwarenessAttachment } from "./awareness";
 import {
+  buildAlreadyKnownPatterns,
   isInQuietHours,
   isPrepTypeTitle,
   localDateString,
@@ -40,7 +41,8 @@ const ALREADY_KNOWN_MS = 48 * 60 * 60 * 1000;
 /**
  * Load awareness-pass attachments for a turn (spec 02 §5.4):
  *  (a) open loops due ≤7d without a non-suppressed ledger row this week
- *  (b) queued prospection deliveries (pending channel=conversation)
+ *  (b) queued prospection deliveries (pending channel=conversation,
+ *      conversationId IS NULL — not yet woven into a conversation)
  *
  * Birthday / date candidates arrive via prospection queue or the loop path;
  * entity birthdays without a loop are scanned by prospection.
@@ -72,7 +74,9 @@ export async function loadAwarenessCandidates(params: {
         ),
       )
       .limit(30),
-    // Queued prospection deliveries waiting for a conversational seam.
+    // Prospection-queued only: never woven (conversation_id null). Rows that
+    // already have a conversationId were woven and must not re-enter the pack
+    // every turn (≤1 nudge per conversation).
     db
       .select({
         id: surfacings.id,
@@ -88,8 +92,7 @@ export async function loadAwarenessCandidates(params: {
           eq(surfacings.channel, "conversation"),
           isNull(surfacings.reaction),
           isNull(surfacings.suppressedReason),
-          // Only "queued" ones not yet woven this session — pending reaction.
-          // Shown within the last 2 days so stale rows fall to prospection.
+          isNull(surfacings.conversationId),
           gte(surfacings.shownAt, new Date(now.getTime() - 2 * DAY_MS)),
         ),
       )
@@ -129,7 +132,12 @@ export async function loadAwarenessCandidates(params: {
       const [ent] = await db
         .select({ name: entities.canonicalName })
         .from(entities)
-        .where(eq(entities.id, q.subjectId))
+        .where(
+          and(
+            eq(entities.id, q.subjectId),
+            eq(entities.userId, params.userId),
+          ),
+        )
         .limit(1);
       title = ent ? `${ent.name}'s birthday` : title;
     }
@@ -168,8 +176,6 @@ export async function loadPriorSurfacingIds(params: {
   conversationId: string | null | undefined;
 }): Promise<string[]> {
   if (!params.conversationId) return [];
-  // Last assistant turn meta.surfacingIds, filtered to non-rule rows that are
-  // still pending (reaction null, not suppressed).
   const [lastAssistant] = await db
     .select({ meta: conversationTurns.meta })
     .from(conversationTurns)
@@ -233,14 +239,17 @@ export async function loadSubjectLedger(
  * True when the user themselves mentioned the subject in the last 48h
  * (memories.raw_text or user conversation turns) — gate 2.
  *
- * For open loops we match against the loop title keywords; for entities,
- * the canonical name. Conservative lexical match (no embedding).
+ * Excludes the current turn (persisted before answerQuestion runs).
+ * Matching is conservative: entity = full name; loops require a multi-token
+ * distinctive phrase, not a single common word like "backend".
  */
 export async function userMentionedSubjectRecently(params: {
   userId: string;
   subjectType: string;
   subjectId: string;
   now?: Date;
+  /** Current user turn id — always excluded (already persisted). */
+  excludeTurnId?: string | null;
 }): Promise<boolean> {
   const now = params.now ?? new Date();
   const since = new Date(now.getTime() - ALREADY_KNOWN_MS);
@@ -257,20 +266,22 @@ export async function userMentionedSubjectRecently(params: {
     const [ent] = await db
       .select({ name: entities.canonicalName })
       .from(entities)
-      .where(eq(entities.id, params.subjectId))
+      .where(
+        and(
+          eq(entities.id, params.subjectId),
+          eq(entities.userId, params.userId),
+        ),
+      )
       .limit(1);
     needle = ent?.name ?? null;
   }
   if (!needle || needle.trim().length < 3) return false;
 
-  // Use the most distinctive multi-word chunk (≥1 word of length ≥4) so we
-  // don't false-positive on "the" / "with". Fall back to the full title.
-  const tokens = needle
-    .split(/[\s,.—–-]+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 4)
-    .slice(0, 4);
-  const patterns = tokens.length > 0 ? tokens : [needle.slice(0, 40)];
+  const patterns = buildAlreadyKnownPatterns(
+    needle,
+    params.subjectType === "entity",
+  );
+  if (patterns.length === 0) return false;
 
   for (const p of patterns) {
     const like = `%${p.replace(/[%_]/g, "")}%`;
@@ -287,17 +298,21 @@ export async function userMentionedSubjectRecently(params: {
       .limit(1);
     if (memHit) return true;
 
+    // Exclude the live turn (persisted before answerQuestion).
+    const turnConds = [
+      eq(conversationTurns.userId, params.userId),
+      eq(conversationTurns.role, "user"),
+      gte(conversationTurns.createdAt, since),
+      sql`${conversationTurns.content} ILIKE ${like}`,
+    ];
+    if (params.excludeTurnId) {
+      turnConds.push(sql`${conversationTurns.id} != ${params.excludeTurnId}`);
+    }
+
     const [turnHit] = await db
       .select({ id: conversationTurns.id })
       .from(conversationTurns)
-      .where(
-        and(
-          eq(conversationTurns.userId, params.userId),
-          eq(conversationTurns.role, "user"),
-          gte(conversationTurns.createdAt, since),
-          sql`${conversationTurns.content} ILIKE ${like}`,
-        ),
-      )
+      .where(and(...turnConds))
       .limit(1);
     if (turnHit) return true;
   }
@@ -328,11 +343,7 @@ export async function countDailySurfacings(
   timezone: string,
   now: Date,
 ): Promise<number> {
-  // Count non-suppressed non-rule surfacings whose shown_at falls on the
-  // user's local calendar day.
   const localDay = localDateString(now, timezone);
-  // Approximate: use UTC day window expanded ±1 day then filter in JS for
-  // correctness across tz edges without a heavy SQL timezone dance.
   const windowStart = new Date(now.getTime() - 36 * 60 * 60 * 1000);
   const rows = await db
     .select({ shownAt: surfacings.shownAt })
@@ -369,7 +380,6 @@ export async function loadUserBudgetSettings(userId: string): Promise<{
 
   return {
     timezone: u?.timezone ?? "UTC",
-    // drizzle time columns come back as "HH:MM:SS" strings
     quietHoursStart: String(u?.quietHoursStart ?? "22:00:00"),
     quietHoursEnd: String(u?.quietHoursEnd ?? "08:00:00"),
     maxDailySurfacings: u?.maxDailySurfacings ?? 3,
@@ -387,8 +397,34 @@ export async function markSurfacingEngaged(surfacingId: string): Promise<void> {
 }
 
 /**
+ * Retarget an existing pending row's channel (e.g. push → chip on send failure).
+ * Only touches non-suppressed pending rows.
+ */
+export async function retargetSurfacingChannel(params: {
+  surfacingId: string;
+  userId: string;
+  channel: Channel;
+  now?: Date;
+}): Promise<boolean> {
+  const now = params.now ?? new Date();
+  const [row] = await db
+    .update(surfacings)
+    .set({ channel: params.channel, shownAt: now })
+    .where(
+      and(
+        eq(surfacings.id, params.surfacingId),
+        eq(surfacings.userId, params.userId),
+        isNull(surfacings.reaction),
+        isNull(surfacings.suppressedReason),
+      ),
+    )
+    .returning({ id: surfacings.id });
+  return Boolean(row);
+}
+
+/**
  * Evaluate a candidate through gates and write the appropriate ledger row.
- * Returns the approved surfacing id + directive text, or null if blocked.
+ * Returns the approved surfacing id, or null if blocked.
  */
 export async function evaluateAndRecord(params: {
   userId: string;
@@ -399,6 +435,8 @@ export async function evaluateAndRecord(params: {
   now?: Date;
   /** Prospection path skips the seam gate. */
   skipSeamGate?: boolean;
+  /** Current user turn id for already-known exclusion. */
+  excludeTurnId?: string | null;
 }): Promise<{
   outcome: GateOutcome;
   surfacingId: string | null;
@@ -406,6 +444,50 @@ export async function evaluateAndRecord(params: {
 }> {
   const now = params.now ?? new Date();
   const settings = await loadUserBudgetSettings(params.userId);
+  const existingId = params.candidate.existingSurfacingId ?? null;
+
+  // Load existing row when reusing a queued delivery so budget adjustments
+  // only uncount rows that were actually included in the counts.
+  let existingRow: {
+    id: string;
+    conversationId: string | null;
+    shownAt: Date;
+    channel: string;
+  } | null = null;
+  if (existingId) {
+    const [row] = await db
+      .select({
+        id: surfacings.id,
+        conversationId: surfacings.conversationId,
+        shownAt: surfacings.shownAt,
+        channel: surfacings.channel,
+      })
+      .from(surfacings)
+      .where(
+        and(
+          eq(surfacings.id, existingId),
+          eq(surfacings.userId, params.userId),
+          isNull(surfacings.suppressedReason),
+        ),
+      )
+      .limit(1);
+    existingRow = row ?? null;
+
+    // Already woven into a conversation — do not re-approve as a fresh nudge.
+    if (
+      existingRow?.conversationId &&
+      params.channel === "conversation"
+    ) {
+      return {
+        outcome: {
+          decision: "suppress",
+          reason: "budget_conversation",
+        },
+        surfacingId: null,
+        approved: false,
+      };
+    }
+  }
 
   const [subjectLedger, alreadyKnown, convoCount, dailyCount] =
     await Promise.all([
@@ -415,18 +497,30 @@ export async function evaluateAndRecord(params: {
         subjectType: params.candidate.subjectType,
         subjectId: params.candidate.subjectId,
         now,
+        excludeTurnId: params.excludeTurnId,
       }),
       countConversationNudges(params.userId, params.conversationId),
       countDailySurfacings(params.userId, settings.timezone, now),
     ]);
 
-  // If this is a queued delivery already counted in convo/daily, don't
-  // double-count it against the budget (it was approved once already).
   let conversationNudgeCount = convoCount;
   let dailySurfacingCount = dailyCount;
-  if (params.candidate.existingSurfacingId) {
-    conversationNudgeCount = Math.max(0, conversationNudgeCount - 1);
-    dailySurfacingCount = Math.max(0, dailySurfacingCount - 1);
+
+  if (existingRow) {
+    // Only uncount conversation if this row is already bound to THIS conversation.
+    if (
+      params.conversationId &&
+      existingRow.conversationId === params.conversationId
+    ) {
+      conversationNudgeCount = Math.max(0, conversationNudgeCount - 1);
+    }
+    // Only uncount daily if the row already counts on the user's local day.
+    if (
+      localDateString(existingRow.shownAt, settings.timezone) ===
+      localDateString(now, settings.timezone)
+    ) {
+      dailySurfacingCount = Math.max(0, dailySurfacingCount - 1);
+    }
   }
 
   const outcome = runGates({
@@ -449,11 +543,28 @@ export async function evaluateAndRecord(params: {
   });
 
   if (outcome.decision === "approve") {
-    // Reuse queued row, or insert a fresh pending row.
-    if (params.candidate.existingSurfacingId) {
+    if (existingRow) {
+      // Reuse queued/stale row: bind conversation context + channel + shownAt.
+      const [updated] = await db
+        .update(surfacings)
+        .set({
+          channel: params.channel,
+          conversationId:
+            params.conversationId ?? existingRow.conversationId ?? null,
+          shownAt: now,
+          evidence: params.candidate.evidence,
+        })
+        .where(
+          and(
+            eq(surfacings.id, existingRow.id),
+            isNull(surfacings.reaction),
+            isNull(surfacings.suppressedReason),
+          ),
+        )
+        .returning({ id: surfacings.id });
       return {
         outcome,
-        surfacingId: params.candidate.existingSurfacingId,
+        surfacingId: updated?.id ?? existingRow.id,
         approved: true,
       };
     }
@@ -478,10 +589,34 @@ export async function evaluateAndRecord(params: {
   }
 
   // hold or suppress → write a suppressed ledger row for tuning (spec 03).
-  // mid_task hold: log with suppressed_reason so it never counts as shown,
-  // but the open loop remains available for next turn / prospection.
+  // mid_task hold: log with suppressed_reason so it never counts as shown;
+  // leave any existing queued row untouched so it can retry.
   const reason =
     outcome.decision === "hold" ? "mid_task" : outcome.reason;
+
+  // Terminal suppress on a queue delivery: mark the queue row itself so it
+  // stops re-entering awareness (except mid_task hold — keep pending).
+  if (
+    existingRow &&
+    outcome.decision === "suppress" &&
+    reason !== "mid_task"
+  ) {
+    try {
+      await db
+        .update(surfacings)
+        .set({ suppressedReason: reason, shownAt: now })
+        .where(eq(surfacings.id, existingRow.id));
+      log.info("nudge gated (queued row)", {
+        decision: outcome.decision,
+        reason,
+        surfacingId: existingRow.id,
+        subjectId: params.candidate.subjectId,
+      });
+    } catch (err) {
+      log.warn("failed to mark queued surfacing suppressed", err as Error);
+    }
+    return { outcome, surfacingId: null, approved: false };
+  }
 
   try {
     const [row] = await db
@@ -537,11 +672,32 @@ export async function userHadConversationToday(
   );
 }
 
+/** Subjects with a non-suppressed non-rule ledger row in the last week. */
+export async function loadSubjectsSurfacedThisWeek(
+  userId: string,
+  now: Date,
+): Promise<Set<string>> {
+  const weekAgo = new Date(now.getTime() - WEEK_MS);
+  const rows = await db
+    .select({ subjectId: surfacings.subjectId })
+    .from(surfacings)
+    .where(
+      and(
+        eq(surfacings.userId, userId),
+        isNull(surfacings.suppressedReason),
+        gte(surfacings.shownAt, weekAgo),
+        sql`${surfacings.kind} != 'rule_applied'`,
+      ),
+    );
+  return new Set(rows.map((r) => r.subjectId));
+}
+
 /**
  * Scan prospection sources for a user (spec 02 §3.3):
  *  (a) open loops due ≤7d — prep at T-3, others at T-1
  *  (b) entity birthday attributes at T-1
- *  (c) pending conversation surfacings >1 day old (never rendered)
+ *  (c) pending conversation surfacings >1 day old (never rendered) —
+ *      retarget same row via existingSurfacingId (no ignored reaction)
  */
 export async function scanProspectionCandidates(params: {
   userId: string;
@@ -551,6 +707,9 @@ export async function scanProspectionCandidates(params: {
   const now = params.now ?? new Date();
   const within = new Date(now.getTime() + 7 * DAY_MS);
   const out: NudgeCandidate[] = [];
+  const seen = new Set<string>();
+
+  const weekSubjects = await loadSubjectsSurfacedThisWeek(params.userId, now);
 
   // (a) open loops
   const loops = await db
@@ -573,11 +732,13 @@ export async function scanProspectionCandidates(params: {
 
   for (const loop of loops) {
     if (!loop.dueAt) continue;
+    if (weekSubjects.has(loop.id) || seen.has(loop.id)) continue;
     const days = localDaysUntil(loop.dueAt, now, params.timezone);
     const prep = isPrepTypeTitle(loop.title);
     const dueWindow = prep ? days === 3 : days === 1;
     if (!dueWindow) continue;
     const dueLabel = loop.dueAt.toISOString().slice(0, 10);
+    seen.add(loop.id);
     out.push({
       kind: "loop_nudge",
       subjectType: "open_loop",
@@ -604,17 +765,16 @@ export async function scanProspectionCandidates(params: {
     new Date(now.getTime() + DAY_MS),
     params.timezone,
   );
-  // tomorrow is YYYY-MM-DD; birthday attributes are often YYYY-MM-DD or MM-DD
-  const tomMD = tomorrow.slice(5); // MM-DD
+  const tomMD = tomorrow.slice(5);
 
   for (const ent of ents) {
+    if (weekSubjects.has(ent.id) || seen.has(ent.id)) continue;
     const attrs = ent.attributes as Record<string, unknown> | null;
     const bday = attrs?.birthday;
     if (typeof bday !== "string") continue;
     const md = bday.length >= 10 ? bday.slice(5, 10) : bday.slice(0, 5);
     if (md !== tomMD) continue;
 
-    // Prefer a memory_entities link as evidence (gate 4 needs ≥1 receipt).
     const [linked] = await db
       .select({ memoryId: memoryEntities.memoryId })
       .from(memoryEntities)
@@ -629,7 +789,6 @@ export async function scanProspectionCandidates(params: {
 
     let evidenceId = linked?.memoryId ?? null;
     if (!evidenceId) {
-      // Last resort: any memory mentioning the name (fixtures / thin graphs).
       const [mem] = await db
         .select({ id: memories.id })
         .from(memories)
@@ -644,6 +803,7 @@ export async function scanProspectionCandidates(params: {
     }
     if (!evidenceId) continue;
 
+    seen.add(ent.id);
     out.push({
       kind: "date_nudge",
       subjectType: "entity",
@@ -654,7 +814,9 @@ export async function scanProspectionCandidates(params: {
     });
   }
 
-  // (c) approved conversation nudges that never rendered — pending >1 day
+  // (c) prospection-queued conversation deliveries never woven (conversation_id
+  // null) and >1 day old — retarget via existingSurfacingId. Do NOT mark
+  // ignored (that self-blocks g1 with ledger_ignored_cooldown).
   const stale = await db
     .select({
       id: surfacings.id,
@@ -662,6 +824,7 @@ export async function scanProspectionCandidates(params: {
       subjectType: surfacings.subjectType,
       subjectId: surfacings.subjectId,
       evidence: surfacings.evidence,
+      conversationId: surfacings.conversationId,
     })
     .from(surfacings)
     .where(
@@ -670,6 +833,7 @@ export async function scanProspectionCandidates(params: {
         eq(surfacings.channel, "conversation"),
         isNull(surfacings.reaction),
         isNull(surfacings.suppressedReason),
+        isNull(surfacings.conversationId),
         sql`${surfacings.kind} != 'rule_applied'`,
         sql`${surfacings.shownAt} < ${new Date(now.getTime() - DAY_MS).toISOString()}::timestamptz`,
       ),
@@ -678,19 +842,29 @@ export async function scanProspectionCandidates(params: {
 
   for (const s of stale) {
     if (s.kind !== "loop_nudge" && s.kind !== "date_nudge") continue;
-    // Mark the old row ignored so it doesn't loop forever; re-deliver fresh.
-    await db
-      .update(surfacings)
-      .set({ reaction: "ignored", reactionAt: now })
-      .where(eq(surfacings.id, s.id));
+    // Prefer retarget of the queued row even if subject was "seen this week"
+    // (the week row IS this pending delivery).
+    if (seen.has(s.subjectId)) continue;
+    seen.add(s.subjectId);
+
+    let oneLine = "Following up on something coming up soon.";
+    if (s.subjectType === "open_loop") {
+      const loop = loops.find((l) => l.id === s.subjectId);
+      if (loop) {
+        oneLine = isPrepTypeTitle(loop.title)
+          ? `${loop.title} is coming up — want a prep plan?`
+          : `${loop.title} is coming up — want a heads-up?`;
+      }
+    }
 
     out.push({
       kind: s.kind,
       subjectType: s.subjectType,
       subjectId: s.subjectId,
-      oneLineNudge: "Following up on something coming up soon.",
+      oneLineNudge: oneLine,
       evidence: s.evidence ?? [],
       confidence: 0.85,
+      existingSurfacingId: s.id,
     });
   }
 

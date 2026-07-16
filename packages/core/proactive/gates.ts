@@ -353,6 +353,70 @@ export function localDaysUntil(
   return Math.round((dueMs - todayMs) / DAY_MS);
 }
 
+/** Common words that must not alone trigger already-known (gate 2). */
+const ALREADY_KNOWN_STOPWORDS = new Set([
+  "with",
+  "from",
+  "about",
+  "this",
+  "that",
+  "have",
+  "will",
+  "your",
+  "want",
+  "need",
+  "plan",
+  "meeting",
+  "interview",
+  "backend",
+  "frontend",
+  "javascript",
+  "typescript",
+  "python",
+]);
+
+/**
+ * Build ILIKE patterns for the already-known gate. Pure helper.
+ * Entity: full name only. Loop: multi-token distinctive phrases — never a
+ * single common token like "backend".
+ */
+export function buildAlreadyKnownPatterns(
+  needle: string,
+  isEntity: boolean,
+): string[] {
+  const cleaned = needle.trim();
+  if (cleaned.length < 3) return [];
+
+  if (isEntity) {
+    return [cleaned];
+  }
+
+  const tokens = cleaned
+    .split(/[\s,.—–/:;!?()[\]"']+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4);
+
+  const significant = tokens.filter(
+    (t) => t.length >= 5 && !ALREADY_KNOWN_STOPWORDS.has(t.toLowerCase()),
+  );
+
+  if (significant.length >= 2) {
+    return [
+      `${significant[0]}%${significant[1]}`,
+      significant.slice(0, 2).join(" "),
+    ];
+  }
+
+  if (significant.length === 1 && significant[0]!.length >= 8) {
+    return [significant[0]!];
+  }
+
+  if (cleaned.length >= 16) {
+    return [cleaned.slice(0, 40)];
+  }
+  return [];
+}
+
 /**
  * Hard-block mid_task seam when the turn looks like a code/debug dump,
  * regardless of model judgment (spec 03 open question #1; P2 acceptance).

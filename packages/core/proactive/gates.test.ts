@@ -6,6 +6,7 @@ import {
   gateLedger,
   gateSeam,
   hardBlockMidTask,
+  buildAlreadyKnownPatterns,
   isInQuietHours,
   isPrepTypeTitle,
   localDaysUntil,
@@ -547,6 +548,27 @@ describe("localDaysUntil", () => {
   test("yesterday → -1", () => {
     const due = new Date("2026-07-15T12:00:00.000Z");
     expect(localDaysUntil(due, NOW, "UTC")).toBe(-1);
+  });
+});
+
+describe("buildAlreadyKnownPatterns", () => {
+  test("entity uses full name only", () => {
+    expect(buildAlreadyKnownPatterns("Priya", true)).toEqual(["Priya"]);
+  });
+
+  test("loop requires multi-token distinctive phrase, not single stopword", () => {
+    const pats = buildAlreadyKnownPatterns(
+      "Interview at Acme — JavaScript, backend",
+      false,
+    );
+    expect(pats.every((p) => p.toLowerCase() !== "backend")).toBe(true);
+    expect(pats.every((p) => p.toLowerCase() !== "interview")).toBe(true);
+    expect(pats.length).toBeGreaterThan(0);
+  });
+
+  test("short generic title yields no fragile single-token patterns", () => {
+    const pats = buildAlreadyKnownPatterns("meet with them", false);
+    expect(pats.every((p) => p.length >= 5 || p.includes("%"))).toBe(true);
   });
 });
 

@@ -255,6 +255,7 @@ export async function streamConversationTurn(params: {
           question,
           history,
           conversationId,
+          userTurnId: userTurn.id,
           onStep: (step) => send({ type: "step", ...step }),
         });
 

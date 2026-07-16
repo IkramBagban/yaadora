@@ -129,6 +129,8 @@ export {
   scanProspectionCandidates,
   userHadConversationToday,
   loadUserBudgetSettings,
+  retargetSurfacingChannel,
+  buildAlreadyKnownPatterns,
   generatePushCopy,
   sendExpoPush,
 } from "./proactive";

@@ -216,10 +216,22 @@ export async function answerQuestion(params: {
   timezone?: string;
   /** durable conversation id for rule_applied ledger rows */
   conversationId?: string | null;
+  /**
+   * Current user turn id (already persisted). Excluded from already-known
+   * gate so the live turn cannot false-suppress a nudge.
+   */
+  userTurnId?: string | null;
   /** fired live for every step (search / clarify / synthesize / rule) as it happens */
   onStep?: (step: AskStep) => void;
 }): Promise<AskHandle> {
-  const { userId, question, history = [], onStep, conversationId } = params;
+  const {
+    userId,
+    question,
+    history = [],
+    onStep,
+    conversationId,
+    userTurnId,
+  } = params;
   const now = params.now ?? new Date();
 
   let timezone = params.timezone;
@@ -302,6 +314,7 @@ export async function answerQuestion(params: {
           seam: aw.seam,
           channel: "conversation",
           now,
+          excludeTurnId: userTurnId,
         });
         if (gated.approved && gated.surfacingId) {
           nudgeDirective = {

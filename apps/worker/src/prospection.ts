@@ -6,6 +6,7 @@ import {
   loadUserBudgetSettings,
   localDateString,
   localMinutesOfDay,
+  retargetSurfacingChannel,
   scanProspectionCandidates,
   sendExpoPush,
   userHadConversationToday,
@@ -242,7 +243,12 @@ export async function runProspectionForUser(params: {
         const mems = await db
           .select({ rawText: memories.rawText })
           .from(memories)
-          .where(inArray(memories.id, candidate.evidence))
+          .where(
+            and(
+              eq(memories.userId, params.userId),
+              inArray(memories.id, candidate.evidence),
+            ),
+          )
           .limit(3);
         evidenceSnippets = mems.map((m) => m.rawText);
       }
@@ -250,11 +256,27 @@ export async function runProspectionForUser(params: {
         oneLineNudge: candidate.oneLineNudge,
         evidenceSnippets,
       });
-      await deliverPush({
+      const sent = await deliverPush({
         userId: params.userId,
         body,
         surfacingId: gated.surfacingId,
       });
+      if (!sent) {
+        // Expo failed or no tokens: retarget ledger row to chip so the user
+        // still sees it on app open. Do not leave a "delivered" push ghost.
+        const retargeted = await retargetSurfacingChannel({
+          surfacingId: gated.surfacingId,
+          userId: params.userId,
+          channel: "chip",
+          now,
+        });
+        if (retargeted) {
+          delivered++;
+          continue;
+        }
+        suppressed++;
+        continue;
+      }
     }
 
     delivered++;

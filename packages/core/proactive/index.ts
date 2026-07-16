@@ -17,7 +17,7 @@ export {
   isPrepTypeTitle,
   localDaysUntil,
   hardBlockMidTask,
-  // re-exported for workers / evals
+  buildAlreadyKnownPatterns,
   P2_ENABLED_KINDS,
   LOOKUP_KINDS,
   IGNORED_COOLDOWN_DAYS,
@@ -53,8 +53,10 @@ export {
   countDailySurfacings,
   loadUserBudgetSettings,
   markSurfacingEngaged,
+  retargetSurfacingChannel,
   evaluateAndRecord,
   userHadConversationToday,
+  loadSubjectsSurfacedThisWeek,
   scanProspectionCandidates,
 } from "./candidates";
 
