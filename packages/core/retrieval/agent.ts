@@ -518,6 +518,14 @@ export async function answerQuestion(params: {
       }),
       // No execute: a terminal client tool. `hasToolCall('clarify')` stops the loop.
     }),
+    json: tool({
+      description:
+        "Fallback tool to catch model hallucinations. Do not use this tool.",
+      inputSchema: z.any(),
+      execute: async (args) => {
+        return { error: "Do not output raw json. Use standard text or other tools." };
+      },
+    }),
   };
 
   const messages: ModelMessage[] = [

@@ -103,7 +103,7 @@ export function AskExchange({
 
         {errored && !exchange.text ? (
           <ErrorState
-            title="Can't reach your memories right now"
+            title={exchange.error || "Can't reach your memories right now"}
             caption="Your question wasn't lost — try again in a moment."
             onRetry={onRetry}
           />
