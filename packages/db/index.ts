@@ -1,9 +1,4 @@
-// @repo/db — Drizzle schema, client, and typed query helpers.
-// Single import surface for apps/server, apps/worker, and @repo/core.
-export * from "./client";
-export * from "./schema";
-export * from "./queries";
-
-// Re-export common Drizzle SQL helpers so apps don't depend on drizzle-orm
-// directly for simple query building.
+export { db, queryClient } from "./client";
+export { conversationTurns, conversations, digests, entities, entityEdges, evalCases, facts, memories, memoryEntities, openLoops, pushTokens, reminders, rules, surfacings, tsvector, users } from "./schema";
+export { entityEmbeddingDistances, findDuplicateFactPairs, findEntitiesTouchedSince, findEntityCandidates, findSupersessionCandidates, flagEntityEdge, getCurrentFactTextsForEntity, getDigest, getDueOpenLoops, getEntityContextCore, getEntityProfiles, getMemoriesByIds, getNotableEdgesForEntity, getOneHopEdges, getOpenLoopsForEntities, getOpenLoopsForEntity, getRecentConversationSummaries, getRecentEpisodicMemories, getTopCurrentFactsForEntity, getUserProfileFactTexts, graphSearchFacts, graphSearchMemories, hybridSearch, lexicalSearchMemories, listLinkableEntities, listUserIdsWithMemories, materializeEntityEdges, mergeDuplicateFact, rescoreSalience, temporalSearchFacts, temporalSearchMemories, toVectorLiteral, updateEntityProfile, upsertDigest, vectorSearchFacts, vectorSearchMemories } from "./queries";
 export { sql, eq, and, or, desc, asc, isNull, inArray, gt, gte, lt, lte } from "drizzle-orm";

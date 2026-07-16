@@ -7,11 +7,12 @@ import { getDigest, getDueOpenLoops } from "@repo/db";
  *
  * Pack slots: profile summary + 7-day digest + near-dated open loops + matched
  * standing rules (P1, filled by the rule matcher) + nudge directive (P2,
- * awareness pass + gates).
+ * awareness pass + gates) + entity context (P3, graph doorway pre-fetch).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
- *   rules > nudge > dated loops > digest > profile
- * (spec 02 §4). "Priority" means the highest-priority slots are kept first; when
+ *   rules > nudge > dated loops > entity context > digest > profile
+ * (spec 02 §4, extended in P3 — entity context sits after dated loops and before
+ * the digest). "Priority" means the highest-priority slots are kept first; when
  * the budget runs out the lowest-priority slot is truncated, then dropped, then
  * the next one up, and so on.
  *
@@ -60,6 +61,18 @@ export interface LoopLine {
   dueAt: Date | null;
 }
 
+/**
+ * Pre-fetched entity context for entities confidently linked this turn (spec 02
+ * §5.2, P3 graph doorway). `text` is the already-rendered, delimited block
+ * (`renderEntityContext`); `entityIds` / `receipts` ride along for the trace and
+ * grounding.
+ */
+export interface EntityContextSlot {
+  text: string;
+  entityIds: string[];
+  receipts: string[];
+}
+
 /** The raw slot inputs, before budgeting/rendering. */
 export interface ContextPackSlots {
   profile: string | null;
@@ -69,6 +82,11 @@ export interface ContextPackSlots {
   rules: RuleSlot[];
   /** Gate-approved nudge directive (0–1). Filled by awareness + gates (P2). */
   nudge: NudgeDirective | null;
+  /**
+   * Pre-fetched entity context for entities linked this turn (spec 02 §5.2, P3).
+   * Sits below loops in display order and after them in budget priority.
+   */
+  entityContext?: EntityContextSlot | null;
 }
 
 export interface ContextPack extends ContextPackSlots {
@@ -107,6 +125,12 @@ function renderNudge(nudge: NudgeDirective): string {
     "Weave it in like a friend would; do not force it; skip it if the moment is wrong.",
   ].join("\n");
 }
+function renderEntityContextSlot(slot: EntityContextSlot): string {
+  return [
+    "About people/projects in this turn (their profile, open threads, current facts and connections — memory ids in [brackets] are receipts):",
+    slot.text,
+  ].join("\n");
+}
 
 /** Hard-truncate a block to at most `maxTokens`, keeping whole lines where it can. */
 function truncateBlock(block: string, maxTokens: number): string | null {
@@ -134,6 +158,11 @@ export function buildContextPackText(
   if (slots.rules.length) byPriority.push({ key: "rules", block: renderRules(slots.rules) });
   if (slots.nudge) byPriority.push({ key: "nudge", block: renderNudge(slots.nudge) });
   if (slots.loops.length) byPriority.push({ key: "loops", block: renderLoops(slots.loops) });
+  if (slots.entityContext?.text)
+    byPriority.push({
+      key: "entityContext",
+      block: renderEntityContextSlot(slots.entityContext),
+    });
   if (slots.weekDigest) byPriority.push({ key: "weekDigest", block: renderDigest(slots.weekDigest) });
   if (slots.profile) byPriority.push({ key: "profile", block: renderProfile(slots.profile) });
 
@@ -162,6 +191,7 @@ export function buildContextPackText(
     "weekDigest",
     "rules",
     "loops",
+    "entityContext",
     "nudge",
   ];
   const parts = [PACK_HEADER];

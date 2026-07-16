@@ -31,6 +31,11 @@ import {
 } from "./routes/settings";
 import { listRules, patchRule } from "./routes/rules";
 import {
+  getEntityContext,
+  flagEntityEdgeRoute,
+  listEntities,
+} from "./routes/entities";
+import {
   confirmReminder,
   confirmSuggestedReminder,
   completeReminder,
@@ -120,6 +125,16 @@ const server = Bun.serve({
     },
     "/surfacings/:id/reaction": {
       POST: (req) => postSurfacingReaction(req, req.params.id),
+    },
+    // Entity pages / graph doorway (spec 02 §8, P3)
+    "/entities": {
+      GET: (req) => listEntities(req),
+    },
+    "/entities/:id/context": {
+      GET: (req) => getEntityContext(req, req.params.id),
+    },
+    "/entities/edges/:id/flag": {
+      POST: (req) => flagEntityEdgeRoute(req, req.params.id),
     },
     // Standing rules (spec 02 §8, P1)
     "/rules": {

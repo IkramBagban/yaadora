@@ -24,10 +24,77 @@ import type { Extraction } from "./extraction";
 
 /** Cosine-distance threshold under which a single vector candidate is a
  * confident auto-link. Entities are embedded from their name for now, so close
- * names cluster tightly. Conservative on purpose. */
-const LINK_DISTANCE_THRESHOLD = 0.15;
+ * names cluster tightly. Conservative on purpose.
+ *
+ * EXPORTED so the turn-time entity linker (retrieval/entity-linker.ts, spec 02
+ * §5.2) resolves against the SAME thresholds — the read and write paths must not
+ * drift. Do not duplicate these numbers anywhere else. */
+export const LINK_DISTANCE_THRESHOLD = 0.15;
 /** Distance under which multiple candidates are "ambiguous" → disambiguation. */
-const AMBIGUOUS_DISTANCE_THRESHOLD = 0.3;
+export const AMBIGUOUS_DISTANCE_THRESHOLD = 0.3;
+
+/**
+ * The minimal candidate shape the shared linking decision needs — a subset of
+ * `EntityCandidate` (@repo/db). `nameMatch` = exact canonical/alias hit;
+ * `distance` = cosine distance to the query embedding (lower = closer, null when
+ * unknown).
+ */
+export interface LinkCandidate {
+  id: string;
+  distance: number | null;
+  nameMatch: boolean;
+}
+
+/**
+ * The resolution decision shared by ingestion linking and the turn-time linker
+ * (spec 02 §2.3 / §5.2). Kept as data (not an entity id) so each path applies
+ * its own policy:
+ *  - ingestion: `matched` → link, `ambiguous` → tiny disambiguation LLM call,
+ *    `none` → create a new entity.
+ *  - turn-time (read path): `matched` (confident) → link; `ambiguous`/`none` →
+ *    NO link. A wrong link on the read path shows the user someone else's
+ *    context, so silence beats a guess.
+ */
+export type LinkDecision =
+  | { kind: "matched"; entityId: string; via: "exact" | "embedding" }
+  | { kind: "ambiguous"; candidateIds: string[] }
+  | { kind: "none" };
+
+/**
+ * Decide, from a candidate set, which existing entity a mention resolves to —
+ * the single source of truth for the alias/lexical-then-embedding thresholds
+ * (spec 02 §2.3). Exactly ONE exact name/alias match auto-links; a single
+ * embedding candidate under `LINK_DISTANCE_THRESHOLD` auto-links; multiple exact
+ * matches or multiple near candidates are `ambiguous`; nothing near is `none`.
+ *
+ * Candidates are expected in `findEntityCandidates` order (name_match DESC,
+ * distance ASC) but the decision does not rely on it beyond exact-match counting.
+ */
+export function decideEntityLink(candidates: LinkCandidate[]): LinkDecision {
+  const exacts = candidates.filter((c) => c.nameMatch);
+  if (exacts.length === 1) {
+    return { kind: "matched", entityId: exacts[0]!.id, via: "exact" };
+  }
+  if (exacts.length > 1) {
+    // Same name, several entities (e.g. two people called "Urhan") — never
+    // guess. Ingestion disambiguates with context; the read path stays silent.
+    return { kind: "ambiguous", candidateIds: exacts.map((c) => c.id) };
+  }
+
+  const near = candidates.filter(
+    (c) => c.distance != null && c.distance <= AMBIGUOUS_DISTANCE_THRESHOLD,
+  );
+  const confident = near.filter(
+    (c) => c.distance != null && c.distance <= LINK_DISTANCE_THRESHOLD,
+  );
+  if (confident.length === 1) {
+    return { kind: "matched", entityId: confident[0]!.id, via: "embedding" };
+  }
+  if (near.length > 1 || confident.length > 1) {
+    return { kind: "ambiguous", candidateIds: near.map((c) => c.id) };
+  }
+  return { kind: "none" };
+}
 
 export interface MentionInput {
   surface: string;
@@ -160,32 +227,27 @@ export async function linkEntities(params: {
 
     let entityId: string | null = null;
 
-    // 1. Confident exact name/alias match → link.
-    const exact = candidates.find((c) => c.nameMatch);
-    if (exact) {
-      entityId = exact.id;
-    } else {
-      // 2. Embedding-similarity resolution.
-      const near = candidates.filter(
-        (c) => c.distance != null && c.distance <= AMBIGUOUS_DISTANCE_THRESHOLD,
-      );
-      const confident = near.filter(
-        (c) => c.distance != null && c.distance <= LINK_DISTANCE_THRESHOLD,
-      );
-      if (confident.length === 1) {
-        entityId = confident[0]!.id;
-      } else if (near.length > 1 || confident.length > 1) {
-        // Ambiguous → tiny disambiguation LLM call.
-        entityId = await disambiguate(
-          memoryText,
-          mention,
-          near.map((c) => ({
+    // Shared alias/lexical-then-embedding decision (spec 02 §2.3) — the SAME
+    // thresholds the turn-time linker uses, so the two paths cannot drift.
+    const decision = decideEntityLink(candidates);
+    if (decision.kind === "matched") {
+      entityId = decision.entityId;
+    } else if (decision.kind === "ambiguous") {
+      // Ambiguous → tiny disambiguation LLM call (ingestion only; the read path
+      // stays silent instead of guessing).
+      const byId = new Map(candidates.map((c) => [c.id, c]));
+      entityId = await disambiguate(
+        memoryText,
+        mention,
+        decision.candidateIds
+          .map((id) => byId.get(id))
+          .filter((c): c is (typeof candidates)[number] => Boolean(c))
+          .map((c) => ({
             id: c.id,
             canonicalName: c.canonicalName,
             profile: c.profile,
           })),
-        );
-      }
+      );
     }
 
     if (entityId) {

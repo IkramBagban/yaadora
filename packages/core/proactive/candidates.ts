@@ -15,6 +15,8 @@ import {
   gte,
   desc,
   inArray,
+  getOpenLoopsForEntities,
+  getNotableEdgesForEntity,
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import type { AwarenessAttachment } from "./awareness";
@@ -39,10 +41,12 @@ const WEEK_MS = 7 * DAY_MS;
 const ALREADY_KNOWN_MS = 48 * 60 * 60 * 1000;
 
 /**
- * Load awareness-pass attachments for a turn (spec 02 §5.4):
+ * Load awareness-pass attachments for a turn (spec 02 §5.4, spec 03 P3 item 4):
  *  (a) open loops due ≤7d without a non-suppressed ledger row this week
  *  (b) queued prospection deliveries (pending channel=conversation,
  *      conversationId IS NULL — not yet woven into a conversation)
+ *  (c) P3 graph doorway: open loops AND notable edges (unresolved, or
+ *      strong-but-stale) attached to entities LINKED THIS TURN.
  *
  * Birthday / date candidates arrive via prospection queue or the loop path;
  * entity birthdays without a loop are scanned by prospection.
@@ -50,10 +54,13 @@ const ALREADY_KNOWN_MS = 48 * 60 * 60 * 1000;
 export async function loadAwarenessCandidates(params: {
   userId: string;
   now?: Date;
+  /** Entities confidently linked in this turn (spec 02 §5.2) — graph doorway. */
+  linkedEntityIds?: string[];
 }): Promise<AwarenessAttachment[]> {
   const now = params.now ?? new Date();
   const within = new Date(now.getTime() + 7 * DAY_MS);
   const weekAgo = new Date(now.getTime() - WEEK_MS);
+  const linkedEntityIds = params.linkedEntityIds ?? [];
 
   const [loops, queued, recentSubjects] = await Promise.all([
     db
@@ -165,6 +172,51 @@ export async function loadAwarenessCandidates(params: {
       dueAt: loop.dueAt.toISOString(),
       evidence: [loop.sourceMemory],
     });
+  }
+
+  // (c) P3 graph doorway: loops + notable edges on entities linked this turn.
+  if (linkedEntityIds.length > 0) {
+    const entityLoops = await getOpenLoopsForEntities(
+      params.userId,
+      linkedEntityIds,
+    ).catch(() => []);
+    for (const loop of entityLoops) {
+      if (seen.has(loop.id) || surfacedThisWeek.has(loop.id)) continue;
+      seen.add(loop.id);
+      attachments.push({
+        kind: "loop_nudge",
+        subjectType: "open_loop",
+        subjectId: loop.id,
+        title: loop.title,
+        dueAt: loop.dueAt ? loop.dueAt.toISOString() : null,
+        evidence: [loop.sourceMemory],
+      });
+    }
+
+    for (const entityId of linkedEntityIds) {
+      const edges = await getNotableEdgesForEntity({
+        userId: params.userId,
+        entityId,
+        now,
+      }).catch(() => []);
+      for (const edge of edges) {
+        if (seen.has(edge.id) || surfacedThisWeek.has(edge.id)) continue;
+        if (edge.evidence.length === 0) continue;
+        seen.add(edge.id);
+        const descriptor =
+          edge.status === "unresolved"
+            ? `${edge.relType} ${edge.otherName} (unresolved)`
+            : `${edge.relType} ${edge.otherName} (out of touch)`;
+        attachments.push({
+          kind: "edge_nudge",
+          subjectType: "entity_edge",
+          subjectId: edge.id,
+          title: descriptor,
+          dueAt: null,
+          evidence: edge.evidence,
+        });
+      }
+    }
   }
 
   return attachments;

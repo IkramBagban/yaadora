@@ -122,6 +122,19 @@ export default function ProfileScreen() {
                 chevron
               />
             </PressableScale>
+            <PressableScale
+              accessibilityRole="button"
+              accessibilityLabel="People and projects"
+              onPress={() => router.push('/entities' as Href)}
+            >
+              <Row
+                divider
+                icon={<Feather name="users" size={18} color={colors.ink2} />}
+                label="People & projects"
+                value="Profiles, open threads, and connections"
+                chevron
+              />
+            </PressableScale>
           </View>
 
           <AppText variant="micro" tone="ink3" style={styles.sectionLabel}>

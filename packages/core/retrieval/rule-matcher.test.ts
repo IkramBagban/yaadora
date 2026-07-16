@@ -7,7 +7,7 @@ import {
   RULE_MATCH_CAP,
   type RuleCandidate,
 } from "./rule-matcher";
-import { planRuleCorrection } from "./rule-edit";
+
 
 function cand(
   id: string,
@@ -96,6 +96,11 @@ describe("shortRuleName + buildTurnEmbedText", () => {
 });
 
 describe("planRuleCorrection (edit-as-correction chain)", () => {
+  let planRuleCorrection: any;
+  beforeAll(() => {
+    planRuleCorrection = require("./rule-edit").planRuleCorrection;
+  });
+
   test("returns null for no-op identical text", () => {
     expect(
       planRuleCorrection({

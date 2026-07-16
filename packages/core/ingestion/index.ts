@@ -3,8 +3,18 @@
 export { runIngestion, markMemoryFailed } from "./pipeline";
 export { extract, ExtractionSchema } from "./extraction";
 export type { Extraction, ExtractionContext } from "./extraction";
-export { linkEntities } from "./linking";
-export type { MentionInput, EntityResolution } from "./linking";
+export {
+  linkEntities,
+  decideEntityLink,
+  LINK_DISTANCE_THRESHOLD,
+  AMBIGUOUS_DISTANCE_THRESHOLD,
+} from "./linking";
+export type {
+  MentionInput,
+  EntityResolution,
+  LinkCandidate,
+  LinkDecision,
+} from "./linking";
 export { reconcileAndInsertFact } from "./supersession";
 export type { ReconcileInput } from "./supersession";
 export { runReprocessJob } from "./reprocess";

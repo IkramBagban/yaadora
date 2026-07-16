@@ -825,7 +825,7 @@ export async function findEntitiesTouchedSince(
   const rows = await db.execute(sql`
     SELECT id, type, canonical_name
     FROM entities
-    WHERE user_id = ${userId} AND (last_seen IS NULL OR last_seen >= ${since})
+    WHERE user_id = ${userId} AND (last_seen IS NULL OR last_seen >= ${since.toISOString()})
   `);
   return asRows(rows).map((r) => ({
     id: String(r.id),
@@ -923,7 +923,7 @@ export async function getRecentEpisodicMemories(
     FROM memories
     WHERE user_id = ${userId}
       AND status = 'processed'
-      AND COALESCE(occurred_at, created_at) >= ${since}
+      AND COALESCE(occurred_at, created_at) >= ${since.toISOString()}
     ORDER BY COALESCE(occurred_at, created_at) DESC
     LIMIT ${limit}
   `);
@@ -963,23 +963,53 @@ export async function rescoreSalience(userId: string): Promise<void> {
 // full per-user rebuild (delete then re-derive), never an incremental patch.
 // ---------------------------------------------------------------------------
 
+/** Predicate fingerprints that, on their own, mark an edge `unresolved`. */
+const EDGE_CONFLICT_PREDICATE_RE =
+  "conflict|dispute|disput|unresolved|fell out|feud|estrange|fallout|owed|owes|argument|tension|rift";
+
 /**
- * Rebuild `entity_edges` for one user from current entity→entity facts, with
- * strength/recency enriched by `memory_entities` co-mention statistics.
+ * Rebuild `entity_edges` for one user from entity→entity facts, with
+ * strength/recency enriched by `memory_entities` co-mention statistics and a
+ * derived `status` (spec 02 §2.5, spec 03 P3 item 5).
  *
  * - Edges come from facts that connect two DISTINCT entities (both subject_id and
- *   object_id set, valid_to IS NULL); `rel_type` is the fact predicate. Pairs are
- *   normalized `a_id < b_id`; predicate semantics carry direction.
+ *   object_id set); `rel_type` is the fact predicate. Pairs are normalized
+ *   `a_id < b_id`; predicate semantics carry direction. BOTH current and closed
+ *   facts contribute so an over-but-remembered relationship still surfaces as an
+ *   edge (scenario 3: "co-founded with Vikram (ended)").
  * - `evidence` = the distinct source memories of the contributing facts
  *   (multi-provenance, fixes the single-provenance TODO).
- * - `strength` = co-mention frequency × recency(30-day exp decay); `freq` and the
- *   last-mention time come from `memory_entities` joined to `memories`, falling
- *   back to the facts' own timing when a pair was never co-mentioned in one memory.
+ * - `strength` = co-mention frequency × recency(30-day exp decay).
+ * - `status` is DERIVED:
+ *     • `ended`      — the pair has NO currently-valid fact for this rel_type
+ *                      (all superseded / valid_to-closed).
+ *     • `unresolved` — a currently-live edge whose predicate reads as a conflict,
+ *                      OR an open `unresolved_conflict` loop is attached to one of
+ *                      the endpoints.
+ *     • `active`     — the default.
  *
- * Returns the number of edges written. Delete-then-insert makes it idempotent and
- * exactly reproducible — the test of the rebuild story (spec 02 §9).
+ * User edge-review flags (spec 03 P3 item 7) are stored on `status = 'flagged'`.
+ * They are USER HISTORY, not derivable from the log, so this rebuild preserves
+ * them across the delete+reinsert by natural key (user, a_id, b_id, rel_type).
+ * A pure drop-table + rerun (the rebuild-story test, spec 02 §9) still reproduces
+ * every DERIVED edge — the flag simply starts empty, exactly as user history
+ * should. `flagged` wins over any derived status so a flagged edge stays excluded.
+ *
+ * Returns the number of edges written. Delete-then-insert makes it idempotent.
  */
 export async function materializeEntityEdges(userId: string): Promise<number> {
+  // Preserve user edge-review flags across the rebuild (natural key).
+  const flaggedRows = await db.execute(sql`
+    SELECT a_id, b_id, rel_type
+    FROM entity_edges
+    WHERE user_id = ${userId} AND status = 'flagged'
+  `);
+  const flagged = asRows(flaggedRows).map((r) => ({
+    aId: String(r.a_id),
+    bId: String(r.b_id),
+    relType: String(r.rel_type),
+  }));
+
   await db.execute(sql`DELETE FROM entity_edges WHERE user_id = ${userId}`);
   const rows = await db.execute(sql`
     WITH edge_facts AS (
@@ -988,10 +1018,14 @@ export async function materializeEntityEdges(userId: string): Promise<number> {
         GREATEST(subject_id, object_id)       AS b_id,
         predicate                             AS rel_type,
         array_agg(DISTINCT source_memory)     AS evidence,
-        max(COALESCE(valid_from, created_at)) AS fact_last
+        max(COALESCE(valid_from, created_at)) AS fact_last,
+        bool_or(valid_to IS NULL)             AS has_current,
+        bool_or(
+          valid_to IS NULL
+          AND predicate ~* ${EDGE_CONFLICT_PREDICATE_RE}
+        )                                     AS predicate_conflict
       FROM facts
       WHERE user_id = ${userId}
-        AND valid_to IS NULL
         AND subject_id IS NOT NULL
         AND object_id IS NOT NULL
         AND subject_id <> object_id
@@ -1012,11 +1046,27 @@ export async function materializeEntityEdges(userId: string): Promise<number> {
       JOIN entities ea ON ea.id = me1.entity_id AND ea.user_id = ${userId}
       JOIN entities eb ON eb.id = me2.entity_id AND eb.user_id = ${userId}
       GROUP BY 1, 2
+    ),
+    conflict_entities AS (
+      SELECT DISTINCT entity_id
+      FROM open_loops
+      WHERE user_id = ${userId}
+        AND status = 'open'
+        AND kind = 'unresolved_conflict'
+        AND entity_id IS NOT NULL
     )
     INSERT INTO entity_edges
       (user_id, a_id, b_id, rel_type, status, strength, last_mentioned, evidence, updated_at)
     SELECT
-      ${userId}, ef.a_id, ef.b_id, ef.rel_type, 'active',
+      ${userId}, ef.a_id, ef.b_id, ef.rel_type,
+      CASE
+        WHEN NOT ef.has_current THEN 'ended'
+        WHEN ef.predicate_conflict
+          OR ef.a_id IN (SELECT entity_id FROM conflict_entities)
+          OR ef.b_id IN (SELECT entity_id FROM conflict_entities)
+          THEN 'unresolved'
+        ELSE 'active'
+      END,
       COALESCE(cm.freq, 1) * exp(
         -extract(epoch FROM (now() - COALESCE(cm.last_mentioned, ef.fact_last, now())))
         / (60 * 60 * 24 * 30)
@@ -1028,7 +1078,40 @@ export async function materializeEntityEdges(userId: string): Promise<number> {
     LEFT JOIN comention cm ON cm.a_id = ef.a_id AND cm.b_id = ef.b_id
     RETURNING id
   `);
+
+  // Re-apply preserved flags (flag wins over derived status).
+  for (const f of flagged) {
+    await db.execute(sql`
+      UPDATE entity_edges
+      SET status = 'flagged'
+      WHERE user_id = ${userId}
+        AND a_id = ${f.aId}::uuid
+        AND b_id = ${f.bId}::uuid
+        AND rel_type = ${f.relType}
+    `);
+  }
+
   return asRows(rows).length;
+}
+
+/**
+ * Flag an entity edge as a bad link ("wrong person", spec 03 P3 item 7).
+ * Stored as `status = 'flagged'`, which excludes it from context assembly and
+ * survives nightly rebuild (see `materializeEntityEdges`). Ownership-checked.
+ * Returns the flagged edge's natural key, or null if not found / not owned.
+ */
+export async function flagEntityEdge(
+  userId: string,
+  edgeId: string,
+): Promise<{ id: string } | null> {
+  const rows = await db.execute(sql`
+    UPDATE entity_edges
+    SET status = 'flagged'
+    WHERE id = ${edgeId}::uuid AND user_id = ${userId}
+    RETURNING id
+  `);
+  const row = asRows(rows)[0];
+  return row ? { id: String(row.id) } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,7 +1152,7 @@ export async function getRecentConversationSummaries(
     FROM conversations
     WHERE user_id = ${userId}
       AND summary IS NOT NULL
-      AND last_turn_at >= ${since}
+      AND last_turn_at >= ${since.toISOString()}
     ORDER BY last_turn_at DESC
     LIMIT ${limit}
   `);
@@ -1139,5 +1222,311 @@ export async function getDueOpenLoops(
     kind: String(r.kind),
     title: String(r.title),
     dueAt: r.due_at ? new Date(r.due_at as string) : null,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Graph doorway (spec 02 §5.2) — turn-time entity linking + entity-context
+// assembly. Raw SQL lives HERE in @repo/db; the linking DECISION + assembler
+// orchestration live in @repo/core/retrieval.
+// ---------------------------------------------------------------------------
+
+export interface LinkableEntity {
+  id: string;
+  type: string;
+  canonicalName: string;
+  aliases: string[];
+}
+
+/**
+ * All of a user's entities as lexical-match fodder for the turn-time linker
+ * (spec 02 §5.2): id, type, canonical name, aliases. No embeddings over the
+ * wire — the linker scans names first and only embeds to break ambiguity. A
+ * decade of heavy use is a few thousand entities, so a full scan is cheap.
+ */
+export async function listLinkableEntities(
+  userId: string,
+): Promise<LinkableEntity[]> {
+  const rows = await db.execute(sql`
+    SELECT id, type, canonical_name, aliases
+    FROM entities
+    WHERE user_id = ${userId}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    type: String(r.type),
+    canonicalName: String(r.canonical_name),
+    aliases: (r.aliases as string[] | null) ?? [],
+  }));
+}
+
+/**
+ * Cosine distance from a turn embedding to specific entities' profile
+ * embeddings (spec 02 §5.2) — used ONLY to break a same-name ambiguity in the
+ * turn-time linker. Returns id → distance (lower = closer); entities without a
+ * profile embedding are omitted.
+ */
+export async function entityEmbeddingDistances(
+  userId: string,
+  ids: string[],
+  embedding: number[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!ids.length || !embedding.length) return out;
+  const vec = toVectorLiteral(embedding);
+  const rows = await db.execute(sql`
+    SELECT id, (profile_embedding <=> ${vec}::vector) AS distance
+    FROM entities
+    WHERE user_id = ${userId}
+      AND id IN (${uuidInList(ids)})
+      AND profile_embedding IS NOT NULL
+  `);
+  for (const r of asRows(rows)) {
+    out.set(String(r.id), Number(r.distance));
+  }
+  return out;
+}
+
+export interface EntityContextCore {
+  id: string;
+  type: string;
+  canonicalName: string;
+  profile: string | null;
+}
+
+/** Entity identity + consolidated profile (assembler + ownership check). */
+export async function getEntityContextCore(
+  userId: string,
+  entityId: string,
+): Promise<EntityContextCore | null> {
+  const rows = await db.execute(sql`
+    SELECT id, type, canonical_name, profile
+    FROM entities
+    WHERE user_id = ${userId} AND id = ${entityId}::uuid
+    LIMIT 1
+  `);
+  const r = asRows(rows)[0];
+  if (!r) return null;
+  return {
+    id: String(r.id),
+    type: String(r.type),
+    canonicalName: String(r.canonical_name),
+    profile: r.profile ? String(r.profile) : null,
+  };
+}
+
+export interface EntityOpenLoop {
+  id: string;
+  kind: string;
+  title: string;
+  dueAt: Date | null;
+  sourceMemory: string;
+}
+
+/** Open loops attached to an entity (spec 02 §5.2), most recent first. */
+export async function getOpenLoopsForEntity(
+  userId: string,
+  entityId: string,
+  limit = 20,
+): Promise<EntityOpenLoop[]> {
+  const rows = await db.execute(sql`
+    SELECT id, kind, title, due_at, source_memory
+    FROM open_loops
+    WHERE user_id = ${userId}
+      AND entity_id = ${entityId}::uuid
+      AND status = 'open'
+    ORDER BY COALESCE(due_at, created_at) DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    dueAt: r.due_at ? new Date(r.due_at as string) : null,
+    sourceMemory: String(r.source_memory),
+  }));
+}
+
+export interface EntityCurrentFact {
+  id: string;
+  predicate: string | null;
+  factText: string;
+  sourceMemory: string;
+  salience: number;
+}
+
+/**
+ * Top currently-valid facts about an entity (spec 02 §5.2): subject OR object =
+ * entity, `valid_to IS NULL`, ordered by salience. Cap ≤8 at the call site.
+ */
+export async function getTopCurrentFactsForEntity(
+  userId: string,
+  entityId: string,
+  limit = 8,
+): Promise<EntityCurrentFact[]> {
+  const rows = await db.execute(sql`
+    SELECT id, predicate, fact_text, source_memory, salience
+    FROM facts
+    WHERE user_id = ${userId}
+      AND valid_to IS NULL
+      AND (subject_id = ${entityId}::uuid OR object_id = ${entityId}::uuid)
+    ORDER BY salience DESC, confidence DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    predicate: r.predicate ? String(r.predicate) : null,
+    factText: String(r.fact_text),
+    sourceMemory: String(r.source_memory),
+    salience: Number(r.salience ?? 0),
+  }));
+}
+
+export interface EntityOneHopEdge {
+  id: string;
+  relType: string;
+  status: string;
+  strength: number;
+  lastMentioned: Date | null;
+  evidence: string[];
+  /** the OTHER endpoint of the edge (relative to the queried entity) */
+  otherId: string;
+  otherName: string;
+  otherType: string;
+  /** whether the other endpoint is itself a known entity node (spec 02 §5.2) */
+  otherIsKnownEntity: boolean;
+}
+
+/**
+ * 1-hop edges for an entity (spec 02 §5.2), strongest first, cap ≤6 at the call
+ * site. FLAGGED edges (bad links the user reported) are EXCLUDED. Each row
+ * resolves the other endpoint's name/type so the reasoning model can make the
+ * 2-hop connection (scenario 3: "co-founded with Vikram (ended)") without any
+ * traversal machinery.
+ */
+export async function getOneHopEdges(
+  userId: string,
+  entityId: string,
+  limit = 6,
+): Promise<EntityOneHopEdge[]> {
+  const rows = await db.execute(sql`
+    SELECT
+      e.id, e.rel_type, e.status, e.strength, e.last_mentioned, e.evidence,
+      other.id   AS other_id,
+      other.canonical_name AS other_name,
+      other.type AS other_type
+    FROM entity_edges e
+    JOIN entities other
+      ON other.id = (CASE WHEN e.a_id = ${entityId}::uuid THEN e.b_id ELSE e.a_id END)
+     AND other.user_id = ${userId}
+    WHERE e.user_id = ${userId}
+      AND (e.a_id = ${entityId}::uuid OR e.b_id = ${entityId}::uuid)
+      AND e.status <> 'flagged'
+    ORDER BY e.strength DESC, e.last_mentioned DESC NULLS LAST
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    relType: String(r.rel_type),
+    status: String(r.status),
+    strength: Number(r.strength ?? 0),
+    lastMentioned: r.last_mentioned ? new Date(r.last_mentioned as string) : null,
+    evidence: (r.evidence as string[] | null) ?? [],
+    otherId: String(r.other_id),
+    otherName: String(r.other_name),
+    otherType: String(r.other_type),
+    otherIsKnownEntity: true,
+  }));
+}
+
+export interface EntityNotableEdge {
+  id: string;
+  relType: string;
+  status: string;
+  strength: number;
+  lastMentioned: Date | null;
+  evidence: string[];
+  otherName: string;
+}
+
+/**
+ * Notable edges for the awareness pass (spec 03 P3 item 4): edges attached to an
+ * entity that are either `unresolved`, or strong-but-stale (not mentioned in the
+ * last `staleDays`). Flagged edges excluded. Ordered unresolved-first, then by
+ * strength. These feed edge_nudge candidates.
+ */
+export async function getNotableEdgesForEntity(params: {
+  userId: string;
+  entityId: string;
+  now?: Date;
+  staleDays?: number;
+  limit?: number;
+}): Promise<EntityNotableEdge[]> {
+  const { userId, entityId, limit = 4 } = params;
+  const now = params.now ?? new Date();
+  const staleDays = params.staleDays ?? 90;
+  const staleBefore = new Date(
+    now.getTime() - staleDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const rows = await db.execute(sql`
+    SELECT
+      e.id, e.rel_type, e.status, e.strength, e.last_mentioned, e.evidence,
+      other.canonical_name AS other_name
+    FROM entity_edges e
+    JOIN entities other
+      ON other.id = (CASE WHEN e.a_id = ${entityId}::uuid THEN e.b_id ELSE e.a_id END)
+     AND other.user_id = ${userId}
+    WHERE e.user_id = ${userId}
+      AND (e.a_id = ${entityId}::uuid OR e.b_id = ${entityId}::uuid)
+      AND e.status <> 'flagged'
+      AND array_length(e.evidence, 1) >= 1
+      AND (
+        e.status = 'unresolved'
+        OR (
+          e.strength > 0
+          AND (e.last_mentioned IS NULL OR e.last_mentioned < ${staleBefore}::timestamptz)
+        )
+      )
+    ORDER BY (e.status = 'unresolved') DESC, e.strength DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    relType: String(r.rel_type),
+    status: String(r.status),
+    strength: Number(r.strength ?? 0),
+    lastMentioned: r.last_mentioned ? new Date(r.last_mentioned as string) : null,
+    evidence: (r.evidence as string[] | null) ?? [],
+    otherName: String(r.other_name),
+  }));
+}
+
+/**
+ * Open loops attached to any of the given entities (spec 02 §4 second half:
+ * loops on entities mentioned this turn, not just dated ones). Excludes loops
+ * already in `excludeIds`. Ordered by due date then recency.
+ */
+export async function getOpenLoopsForEntities(
+  userId: string,
+  entityIds: string[],
+  limit = 10,
+): Promise<Array<EntityOpenLoop & { entityId: string }>> {
+  if (!entityIds.length) return [];
+  const rows = await db.execute(sql`
+    SELECT id, kind, title, due_at, source_memory, entity_id
+    FROM open_loops
+    WHERE user_id = ${userId}
+      AND status = 'open'
+      AND entity_id IN (${uuidInList(entityIds)})
+    ORDER BY due_at ASC NULLS LAST, created_at DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    dueAt: r.due_at ? new Date(r.due_at as string) : null,
+    sourceMemory: String(r.source_memory),
+    entityId: String(r.entity_id),
   }));
 }

@@ -1,4 +1,7 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, test, beforeAll, afterAll } from "bun:test";
+
+let ExtractionSchema: any;
+let resolveOpenLoop: any, upsertOpenLoops: any, upsertStandingRule: any;
 
 const state: {
   selectRows: Array<Array<Record<string, unknown>>>;
@@ -6,65 +9,72 @@ const state: {
   updates: Array<{ table: unknown; values: unknown }>;
 } = { selectRows: [], inserts: [], updates: [] };
 
-function selectChain() {
-  const terminal = async () => state.selectRows.shift() ?? [];
-  return {
-    from: () => ({
-      where: () => ({
-        limit: terminal,
-        orderBy: () => ({ limit: terminal }),
+beforeAll(() => {
+  function selectChain() {
+    const terminal = async () => state.selectRows.shift() ?? [];
+    return {
+      from: () => ({
+        where: () => ({
+          limit: terminal,
+          orderBy: () => ({ limit: terminal }),
+        }),
       }),
-    }),
-  };
-}
+    };
+  }
 
-// The stage tests use a minimal Drizzle double. This pins idempotent writes and
-// the strict resolution gate without requiring DATABASE_URL.
-mock.module("@repo/db", () => ({
-  db: {
-    select: selectChain,
-    insert: (table: unknown) => ({
-      values: async (values: unknown) => {
-        state.inserts.push({ table, values });
-      },
-    }),
-    update: (table: unknown) => ({
-      set: (values: unknown) => {
-        state.updates.push({ table, values });
-        return { where: async () => undefined };
-      },
-    }),
-  },
-  memories: {},
-  reminders: {},
-  rules: { id: "id", userId: "user_id", sourceMemory: "source_memory" },
-  openLoops: {
-    id: "id",
-    userId: "user_id",
-    sourceMemory: "source_memory",
-    kind: "kind",
-    title: "title",
-    entityId: "entity_id",
-    status: "status",
-    embedding: "embedding",
-  },
-  users: {},
-  entities: {},
-  memoryEntities: {},
-  facts: {},
-  eq: () => ({}),
-  and: () => ({}),
-  inArray: () => ({}),
-  sql: () => ({}),
-  toVectorLiteral: (embedding: number[]) => `[${embedding.join(",")}]`,
-  findEntityCandidates: async () => [],
-  findSupersessionCandidates: async () => [],
-}));
+  mock.module("@repo/db", () => ({
+    db: {
+      select: selectChain,
+      insert: (table: unknown) => ({
+        values: async (values: unknown) => {
+          state.inserts.push({ table, values });
+        },
+      }),
+      update: (table: unknown) => ({
+        set: (values: unknown) => {
+          state.updates.push({ table, values });
+          return { where: async () => undefined };
+        },
+      }),
+    },
+    memories: {},
+    reminders: {},
+    rules: { id: "id", userId: "user_id", sourceMemory: "source_memory" },
+    openLoops: {
+      id: "id",
+      userId: "user_id",
+      sourceMemory: "source_memory",
+      kind: "kind",
+      title: "title",
+      entityId: "entity_id",
+      status: "status",
+      embedding: "embedding",
+    },
+    users: {},
+    entities: {},
+    memoryEntities: {},
+    facts: {},
+    eq: () => ({}),
+    and: () => ({}),
+    inArray: () => ({}),
+    sql: () => ({}),
+    toVectorLiteral: (embedding: number[]) => `[${embedding.join(",")}]`,
+    findEntityCandidates: async () => [],
+    findSupersessionCandidates: async () => [],
+  }));
 
-// require keeps this compatible with the package's NodeNext typecheck while
-// still loading after Bun's module mock has been installed.
-const { ExtractionSchema } = require("./extraction");
-const { resolveOpenLoop, upsertOpenLoops, upsertStandingRule } = require("./pipeline");
+  const extractionMod = require("./extraction");
+  ExtractionSchema = extractionMod.ExtractionSchema;
+  
+  const pipelineMod = require("./pipeline");
+  resolveOpenLoop = pipelineMod.resolveOpenLoop;
+  upsertOpenLoops = pipelineMod.upsertOpenLoops;
+  upsertStandingRule = pipelineMod.upsertStandingRule;
+});
+
+afterAll(() => {
+  mock.restore();
+});
 
 const baseExtraction = {
   occurredAt: null,

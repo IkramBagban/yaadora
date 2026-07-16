@@ -121,7 +121,13 @@ export interface Citation {
 
 export type AskMode = 'recall' | 'reason' | 'clarify';
 
-export type AskStepKind = 'search' | 'clarify' | 'synthesize' | 'reminder' | 'rule';
+export type AskStepKind =
+  | 'search'
+  | 'clarify'
+  | 'synthesize'
+  | 'reminder'
+  | 'rule'
+  | 'entity';
 
 /** One visible step in the agent's reasoning trace. */
 export interface AskStep {
@@ -194,4 +200,64 @@ export interface ReminderSuggestion {
   text: string;
   dueAt: string;
   sourceMemoryId?: string;
+}
+
+// --- entity pages / graph doorway (spec 02 §8, P3) -------------------------
+
+/** A current fact about an entity, with provenance for a tappable receipt. */
+export interface EntityContextFact {
+  id: string;
+  predicate: string | null;
+  factText: string;
+  sourceMemory: string;
+}
+
+/** An open loop attached to an entity. */
+export interface EntityContextLoop {
+  id: string;
+  kind: string;
+  title: string;
+  dueAt: string | null;
+  sourceMemory: string;
+}
+
+/** A 1-hop relationship edge with its derived status. */
+export interface EntityContextEdge {
+  id: string;
+  relType: string;
+  status: string;
+  lastMentioned: string | null;
+  otherId: string;
+  otherName: string;
+  otherType: string;
+  otherIsKnownEntity: boolean;
+  evidence: string[];
+}
+
+/** A provenance memory shown as a tappable receipt. */
+export interface EntityReceipt {
+  id: string;
+  snippet: string;
+  occurredAt: string | null;
+  createdAt: string;
+}
+
+/** GET /entities/:id/context */
+export interface EntityContextPayload {
+  entity: { id: string; canonicalName: string; type: string };
+  profile: string | null;
+  facts: EntityContextFact[];
+  openLoops: EntityContextLoop[];
+  edges: EntityContextEdge[];
+  receipts: EntityReceipt[];
+}
+
+/** GET /entities */
+export interface EntityListItem {
+  id: string;
+  type: string;
+  canonicalName: string;
+  profile: string | null;
+  mentionCount: number;
+  lastSeen: string | null;
 }

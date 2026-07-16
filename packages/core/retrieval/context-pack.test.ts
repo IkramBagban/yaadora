@@ -1,16 +1,25 @@
-import { test, expect, mock } from "bun:test";
+import { test, expect, mock, beforeAll, afterAll } from "bun:test";
 
-mock.module("@repo/db", () => ({
-  getDigest: async () => null,
-  getDueOpenLoops: async () => [],
-}));
-
-const {
-  buildContextPackText,
-  estimateTokens,
-  CONTEXT_PACK_TOKEN_BUDGET,
-} = require("./context-pack");
+let buildContextPackText: any;
+let estimateTokens: any;
+let CONTEXT_PACK_TOKEN_BUDGET: any;
 type ContextPackSlots = import("./context-pack").ContextPackSlots;
+
+beforeAll(() => {
+  mock.module("@repo/db", () => ({
+    getDigest: async () => null,
+    getDueOpenLoops: async () => [],
+  }));
+
+  const mod = require("./context-pack");
+  buildContextPackText = mod.buildContextPackText;
+  estimateTokens = mod.estimateTokens;
+  CONTEXT_PACK_TOKEN_BUDGET = mod.CONTEXT_PACK_TOKEN_BUDGET;
+});
+
+afterAll(() => {
+  mock.restore();
+});
 
 /**
  * The load-bearing invariant of the context pack (spec 02 §4): whatever the
@@ -105,4 +114,81 @@ test("empty pack is just the header", () => {
   const { text, estimatedTokens } = buildContextPackText(slots);
   expect(text).toBe("## What you currently know (context pack)");
   expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+});
+
+// ---------------------------------------------------------------------------
+// P3 entity-context slot (spec 02 §4/§5.2): displayed BELOW loops and ABOVE the
+// nudge; budgeted AFTER dated loops and BEFORE the digest.
+// ---------------------------------------------------------------------------
+
+test("entity context slot renders below loops and above the nudge", () => {
+  const slots: ContextPackSlots = {
+    profile: "PROFILE_MARKER",
+    weekDigest: "DIGEST_MARKER",
+    loops: [
+      {
+        id: "loop-1",
+        kind: "upcoming_event",
+        title: "Trip to Pune",
+        dueAt: new Date("2026-07-24T00:00:00Z"),
+      },
+    ],
+    rules: [],
+    nudge: { text: "NUDGE_MARKER", evidence: ["m1"] },
+    entityContext: {
+      text: "— Rahul (person) —\nProfile: co-founder",
+      entityIds: ["e1"],
+      receipts: ["m1"],
+    },
+  };
+  const { text, estimatedTokens } = buildContextPackText(slots);
+  expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+  const loopsIdx = text.indexOf("Open threads:");
+  const entityIdx = text.indexOf("Rahul (person)");
+  const nudgeIdx = text.indexOf("NUDGE_MARKER");
+  expect(loopsIdx).toBeGreaterThanOrEqual(0);
+  expect(entityIdx).toBeGreaterThan(loopsIdx);
+  expect(nudgeIdx).toBeGreaterThan(entityIdx);
+});
+
+test("budget priority: loops > entity context > digest under pressure", () => {
+  const slots: ContextPackSlots = {
+    profile: "PROFILE_MARKER",
+    weekDigest: "DIGEST_MARKER",
+    loops: [
+      {
+        id: "loop-1",
+        kind: "upcoming_event",
+        title: bigText(CONTEXT_PACK_TOKEN_BUDGET * 2),
+        dueAt: null,
+      },
+    ],
+    rules: [],
+    nudge: null,
+    entityContext: {
+      text: "ENTITY_MARKER " + bigText(CONTEXT_PACK_TOKEN_BUDGET * 2),
+      entityIds: ["e1"],
+      receipts: [],
+    },
+  };
+  const { text, estimatedTokens } = buildContextPackText(slots);
+  expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+  // Loops (higher priority) survive; the digest (lower) is squeezed out.
+  expect(text).toContain("Open threads:");
+  expect(text).not.toContain("DIGEST_MARKER");
+});
+
+test("clamp holds with a grossly oversized entity context slot", () => {
+  const huge = bigText(CONTEXT_PACK_TOKEN_BUDGET * 4 * 5);
+  const slots: ContextPackSlots = {
+    profile: null,
+    weekDigest: null,
+    loops: [],
+    rules: [],
+    nudge: null,
+    entityContext: { text: huge, entityIds: ["e1"], receipts: [] },
+  };
+  const { text, estimatedTokens } = buildContextPackText(slots);
+  expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+  expect(estimateTokens(text)).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
 });

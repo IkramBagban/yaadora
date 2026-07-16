@@ -44,7 +44,24 @@ export type {
   LoopLine,
   RuleSlot,
   NudgeDirective,
+  EntityContextSlot,
 } from "./context-pack";
+
+// Graph doorway (spec 02 §5.2) — turn-time entity linker + context assembler.
+export { linkTurnEntities, TURN_ENTITY_CAP } from "./entity-linker";
+export type { LinkedEntity, LinkTurnEntitiesParams } from "./entity-linker";
+export {
+  assembleEntityContext,
+  renderEntityContext,
+  ENTITY_FACT_CAP,
+  ENTITY_EDGE_CAP,
+} from "./entity-context";
+export type {
+  EntityContext,
+  EntityContextLoop,
+  EntityContextFact,
+  EntityContextEdge,
+} from "./entity-context";
 
 // Rules doorway (spec 02 §5.1) — task-matched standing rules.
 export {

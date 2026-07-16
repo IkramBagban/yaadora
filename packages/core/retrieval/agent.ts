@@ -8,6 +8,7 @@ import {
   surfacings,
   eq,
   sql,
+  getMemoriesByIds,
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { reasoningModel } from "../ai/models";
@@ -18,12 +19,20 @@ import {
   buildContextPackText,
   type NudgeDirective,
   type RuleSlot,
+  type LoopLine,
+  type EntityContextSlot,
 } from "./context-pack";
 import {
   matchStandingRules,
   shortRuleName,
   type MatchedRule,
 } from "./rule-matcher";
+import { linkTurnEntities, type LinkedEntity } from "./entity-linker";
+import {
+  assembleEntityContext,
+  renderEntityContext,
+  type EntityContext,
+} from "./entity-context";
 import {
   evaluateAndRecord,
   loadAwarenessCandidates,
@@ -56,7 +65,7 @@ export interface AskHistoryTurn {
 
 /** A single visible step in the agent's trace (emitted live + summarised). */
 export interface AskStep {
-  kind: "search" | "clarify" | "synthesize" | "reminder" | "rule";
+  kind: "search" | "clarify" | "synthesize" | "reminder" | "rule" | "entity";
   label: string;
   query?: string;
   count?: number;
@@ -137,6 +146,11 @@ Answering — talk like a friend who remembers, not a database:
 Standing rules (context pack):
 - Standing rules listed in the context pack override generic behavior for the matched task and must be applied VISIBLY — the rule shapes the answer itself, it is not just mentioned.
 - If a rule lists explicit check questions or criteria, address EACH one by name in the answer (as short headed sections or a clear checklist) so the user can see every criterion applied. Do not substitute a generic writing review that only vaguely nods at the rule.
+
+People & projects (graph doorway):
+- When the context pack already includes a section about a person or project the user named this turn (their profile, open threads, current facts, and connections), treat it as retrieved memory: use it directly, and naturally raise anything unresolved or overdue on it — like a friend who remembers. You do not need to search again for what the pack already tells you.
+- You have a get_entity_context tool. If a SEARCH result surfaces a known person or project you want to reason about (e.g. someone who fits what the user is asking), call get_entity_context with their name to pull their profile, open threads, facts, and connections before answering. Use it only for people/projects the user actually has; if it returns found:false, do not invent one.
+- Connections in an entity's context may name OTHER known people/projects (e.g. "co-founded with Vikram (ended)"). You may point out a link the user might not have made, when it's relevant — grounded in that connection, never invented.
 
 Setting reminders:
 - You have a set_reminder tool. Use it ONLY when the user explicitly asks to be reminded or to set/schedule a reminder ("remind me to …", "set a reminder for …"). Resolve the time to an absolute moment from the current date/time above, call set_reminder(text, dueAt), then confirm in one short line (e.g. "Done — I'll remind you Sunday at 3 PM."). If they ask for a reminder but give no usable time, ask for the time instead of guessing.
@@ -256,6 +270,10 @@ export async function answerQuestion(params: {
   let wovenNudge: { surfacingId: string; evidence: string[] } | null = null;
   /** Nudge ledger id (merged into AskResult.surfacingIds with rules). */
   let nudgeSurfacingId: string | null = null;
+  /** Entities confidently linked in this turn (graph doorway pre-fetch). */
+  let linkedEntities: LinkedEntity[] = [];
+  /** Their assembled context (pre-fetched into the pack, spec 02 §5.2). */
+  let prefetchedContexts: EntityContext[] = [];
 
   try {
     const recentTurns = history.slice(-6).map((h) => ({
@@ -263,37 +281,57 @@ export async function answerQuestion(params: {
       content: h.content,
     }));
 
-    const [matched, pack, awarenessBundle] = await Promise.all([
-      matchStandingRules({
-        userId,
-        userTurn: question,
-        previousUserTurn,
-      }),
+    // Phase A: matcher + pack SQL + turn-time entity linker + prior-nudge ids,
+    // all concurrent (spec 02 §5.1/§5.2/§5.4). The linker runs alongside pack
+    // assembly; entity-context assembly and awareness depend on its result.
+    const [matched, pack, linked, priorSurfacingIds] = await Promise.all([
+      matchStandingRules({ userId, userTurn: question, previousUserTurn }),
       assembleContextPack({ userId, now }).catch((err) => {
         log.warn("context pack assembly failed; continuing without it", err as Error);
         return null;
       }),
-      // Awareness: load candidates + prior ids, then one fast-tier call ≤800ms.
+      linkTurnEntities({ userId, userTurn: question }).catch((err) => {
+        log.warn("turn entity linker failed; continuing without it", err as Error);
+        return [] as LinkedEntity[];
+      }),
+      loadPriorSurfacingIds({ userId, conversationId }).catch(() => [] as string[]),
+    ]);
+    matchedRules = matched;
+    linkedEntities = linked;
+    const linkedEntityIds = linked.map((l) => l.entityId);
+
+    // Phase B: pre-fetch entity context (both doorway modes share the assembler)
+    // AND run the awareness pass with graph-doorway candidates — concurrently.
+    const [assembled, awarenessBundle] = await Promise.all([
+      Promise.all(
+        linkedEntityIds.map((id) =>
+          assembleEntityContext(userId, id).catch((err) => {
+            log.warn("entity context assembly failed", err as Error);
+            return null;
+          }),
+        ),
+      ),
       (async () => {
         try {
-          const [candidates, priorSurfacingIds] = await Promise.all([
-            loadAwarenessCandidates({ userId, now }),
-            loadPriorSurfacingIds({ userId, conversationId }),
-          ]);
+          const candidates = await loadAwarenessCandidates({
+            userId,
+            now,
+            linkedEntityIds,
+          });
           const awareness = await runAwarenessPass({
             userTurn: question,
             recentTurns,
             candidates,
             priorSurfacingIds,
           });
-          return { awareness, candidates };
+          return { awareness };
         } catch (err) {
           log.warn("awareness setup failed; continuing without nudge", err as Error);
           return null;
         }
       })(),
     ]);
-    matchedRules = matched;
+    prefetchedContexts = assembled.filter((c): c is EntityContext => Boolean(c));
 
     // Reaction capture for last turn's nudge (best-effort).
     if (awarenessBundle?.awareness.engagedWithPrior) {
@@ -337,24 +375,49 @@ export async function answerQuestion(params: {
       ruleText: r.ruleText,
     }));
 
-    if (pack) {
-      // Re-budget with matched rules + optional nudge (renderNudge already
-      // present; budget contract unchanged — rules > nudge > loops… — §4).
+    // Graph doorway: pre-fetched entity context → its own pack slot (below loops,
+    // spec 02 §5.2) + its open loops fold into the live-loops slot (§4 second
+    // half: loops on entities mentioned this turn, not just dated ones).
+    let entityContextSlot: EntityContextSlot | null = null;
+    if (prefetchedContexts.length > 0) {
+      entityContextSlot = {
+        text: prefetchedContexts.map(renderEntityContext).join("\n\n"),
+        entityIds: prefetchedContexts.map((c) => c.entity.id),
+        receipts: Array.from(
+          new Set(prefetchedContexts.flatMap((c) => c.receipts)),
+        ),
+      };
+    }
+
+    const loopById = new Map<string, LoopLine>();
+    for (const l of pack?.loops ?? []) loopById.set(l.id, l);
+    for (const ctx of prefetchedContexts) {
+      for (const l of ctx.openLoops) {
+        if (loopById.has(l.id)) continue;
+        loopById.set(l.id, {
+          id: l.id,
+          kind: l.kind,
+          title: l.title,
+          dueAt: l.dueAt ? new Date(l.dueAt) : null,
+        });
+      }
+    }
+    const mergedLoops = Array.from(loopById.values());
+
+    const hasPackContent =
+      Boolean(pack) ||
+      ruleSlots.length > 0 ||
+      Boolean(nudgeDirective) ||
+      Boolean(entityContextSlot) ||
+      mergedLoops.length > 0;
+    if (hasPackContent) {
       const { text } = buildContextPackText({
-        profile: pack.profile,
-        weekDigest: pack.weekDigest,
-        loops: pack.loops,
+        profile: pack?.profile ?? null,
+        weekDigest: pack?.weekDigest ?? null,
+        loops: mergedLoops,
         rules: ruleSlots,
         nudge: nudgeDirective,
-      });
-      contextPackText = text;
-    } else if (matchedRules.length || nudgeDirective) {
-      const { text } = buildContextPackText({
-        profile: null,
-        weekDigest: null,
-        loops: [],
-        rules: ruleSlots,
-        nudge: nudgeDirective,
+        entityContext: entityContextSlot,
       });
       contextPackText = text;
     }
@@ -375,6 +438,30 @@ export async function answerQuestion(params: {
   let searchCount = 0;
   let topRelevance = 0;
 
+  /**
+   * Add entity-context provenance memories to the citation set so the receipts
+   * behind a person/project become tappable sources — the same drawer as search
+   * citations. Best-effort; a failure never blocks the answer.
+   */
+  async function addReceiptCitations(memoryIds: string[]): Promise<void> {
+    const missing = memoryIds.filter((id) => id && !citeMap.has(id));
+    if (missing.length === 0) return;
+    try {
+      const mems = await getMemoriesByIds(userId, missing);
+      for (const m of mems) {
+        if (citeMap.has(m.id)) continue;
+        const clean = m.rawText.replace(/\s+/g, " ").trim();
+        citeMap.set(m.id, {
+          memoryId: m.id,
+          snippet: clean.length > 200 ? `${clean.slice(0, 200)}…` : clean,
+          occurredAt: (m.occurredAt ?? m.createdAt)?.toISOString() ?? null,
+        });
+      }
+    } catch (err) {
+      log.warn("failed to load entity receipt citations", err as Error);
+    }
+  }
+
   // Emit rule steps before the main agent so the live trace shows them.
   for (const rule of matchedRules) {
     const step: AskStep = {
@@ -383,6 +470,22 @@ export async function answerQuestion(params: {
     };
     steps.push(step);
     onStep?.(step);
+  }
+
+  // Graph doorway (pre-fetch mode): emit an entity step per linked entity and
+  // surface its receipts as citations (spec 02 §5.2, P3).
+  for (const ctx of prefetchedContexts) {
+    const step: AskStep = {
+      kind: "entity",
+      label: `Looking at ${ctx.entity.canonicalName}`,
+    };
+    steps.push(step);
+    onStep?.(step);
+  }
+  if (prefetchedContexts.length > 0) {
+    await addReceiptCitations(
+      Array.from(new Set(prefetchedContexts.flatMap((c) => c.receipts))),
+    );
   }
 
   // Ledger + apply counters (exempt from nudge budgets).
@@ -461,6 +564,81 @@ export async function answerQuestion(params: {
             memoryId: h.memoryId,
             occurredAt: h.occurredAt,
             text: h.snippet,
+          })),
+        };
+      },
+    }),
+    get_entity_context: tool({
+      description:
+        "Pull what the user knows about ONE specific person or project by name: their profile, open threads, current facts, and how they connect to other people/projects (with dates and status). Use it when a search result surfaces a known person or project and you want their full context before answering. Returns found:false if no person/project by that name is in the user's memory — do not invent one.",
+      inputSchema: z.object({
+        name: z
+          .string()
+          .describe(
+            "the person's or project's name exactly as it appears in the user's memory",
+          ),
+      }),
+      execute: async ({ name }) => {
+        const q = (name ?? "").trim();
+        if (!q) return { found: false };
+        let target: LinkedEntity | undefined;
+        try {
+          const linked = await linkTurnEntities({
+            userId,
+            userTurn: q,
+            cap: 1,
+          });
+          target = linked[0];
+        } catch (err) {
+          log.warn("get_entity_context link failed", err as Error);
+          return { found: false };
+        }
+        if (!target) {
+          return {
+            found: false,
+            note: "No known person or project by that name.",
+          };
+        }
+        const ctx = await assembleEntityContext(userId, target.entityId).catch(
+          (err) => {
+            log.warn("get_entity_context assembly failed", err as Error);
+            return null;
+          },
+        );
+        if (!ctx) return { found: false };
+
+        // Tool mode also emits the entity trace step (spec 02 §5.2).
+        const step: AskStep = {
+          kind: "entity",
+          label: `Looking at ${ctx.entity.canonicalName}`,
+        };
+        steps.push(step);
+        onStep?.(step);
+        await addReceiptCitations(ctx.receipts);
+
+        return {
+          found: true,
+          name: ctx.entity.canonicalName,
+          type: ctx.entity.type,
+          profile: ctx.profile,
+          openLoops: ctx.openLoops.map((l) => ({
+            title: l.title,
+            kind: l.kind,
+            dueAt: l.dueAt,
+            memoryId: l.sourceMemory,
+          })),
+          facts: ctx.facts.map((f) => ({
+            text: f.factText,
+            memoryId: f.sourceMemory,
+          })),
+          connections: ctx.edges.map((e) => ({
+            relationship: e.relType,
+            who: e.otherName,
+            type: e.otherType,
+            status: e.status,
+            lastMentioned: e.lastMentioned,
+            knownEntity: e.otherIsKnownEntity,
+            memoryIds: e.evidence,
           })),
         };
       },

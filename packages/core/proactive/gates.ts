@@ -10,8 +10,16 @@
  * count as real surfacings.
  */
 
-/** Content kinds enabled in P2. Pattern/absence are inference-grade (P5/P6). */
-export const P2_ENABLED_KINDS = new Set(["loop_nudge", "date_nudge"]);
+/**
+ * Content kinds enabled through P3. P2 shipped date/loop; P3 (graph doorway)
+ * adds `edge_nudge` and entity-attached loop nudges (spec 03 P3 item 4).
+ * Pattern/absence remain inference-grade and gated off (P5/P6).
+ */
+export const P2_ENABLED_KINDS = new Set([
+  "loop_nudge",
+  "date_nudge",
+  "edge_nudge",
+]);
 
 /** Lookup-grade kinds that need ≥1 receipt (spec 02 §5.4 gate 4). */
 export const LOOKUP_KINDS = new Set([
@@ -170,7 +178,7 @@ export function gateSeam(seam: Seam): GateOutcome | null {
 
 /**
  * g4 Evidence threshold + phase enablement.
- * P2: only loop_nudge / date_nudge; each needs ≥1 receipt.
+ * Through P3: loop_nudge / date_nudge / edge_nudge; each needs ≥1 receipt.
  * pattern/absence (and any other non-enabled kind) rejected outright.
  */
 export function gateEvidence(candidate: NudgeCandidate): GateOutcome | null {

@@ -23,8 +23,8 @@ export const AWARENESS_DEADLINE_MS = 800;
 
 /** Attachment the model may choose among (or none). */
 export interface AwarenessAttachment {
-  kind: "loop_nudge" | "date_nudge";
-  subjectType: "open_loop" | "entity";
+  kind: "loop_nudge" | "date_nudge" | "edge_nudge";
+  subjectType: "open_loop" | "entity" | "entity_edge";
   subjectId: string;
   title: string;
   dueAt: string | null;

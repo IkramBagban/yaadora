@@ -13,6 +13,8 @@ import type {
   ReminderScope,
   StandingRule,
   SurfacingEvidenceMemory,
+  EntityContextPayload,
+  EntityListItem,
 } from './types';
 
 const log = createMobileLogger('api');
@@ -372,6 +374,28 @@ export const api = {
     return request<StandingRule>(`/rules/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
+    });
+  },
+
+  // --- entity pages / graph doorway (spec 02 §8, P3) ----------------------
+
+  /** A person/project's assembled context: profile, facts, loops, edges, receipts. */
+  getEntityContext(id: string): Promise<EntityContextPayload> {
+    return request<EntityContextPayload>(
+      `/entities/${encodeURIComponent(id)}/context`,
+    );
+  },
+
+  /** Owned entities for the entity list screen (optionally filtered by type). */
+  listEntities(type?: string): Promise<{ entities: EntityListItem[] }> {
+    const q = type ? `?type=${encodeURIComponent(type)}` : '';
+    return request<{ entities: EntityListItem[] }>(`/entities${q}`);
+  },
+
+  /** Edge review: flag a bad link ("wrong person"); excludes it from context. */
+  flagEntityEdge(edgeId: string): Promise<{ id: string; status: string }> {
+    return request(`/entities/edges/${encodeURIComponent(edgeId)}/flag`, {
+      method: 'POST',
     });
   },
 };

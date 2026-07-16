@@ -250,15 +250,26 @@ describe("gateEvidence (g4)", () => {
     });
   });
 
-  test("edge_nudge not enabled in P2", () => {
-    expect(gateEvidence(cand({ kind: "edge_nudge" }))).toEqual({
-      decision: "suppress",
-      reason: "kind_not_enabled",
-    });
+  test("edge_nudge with ≥1 receipt → pass (P3 graph doorway)", () => {
+    expect(
+      gateEvidence(cand({ kind: "edge_nudge", subjectType: "entity_edge" })),
+    ).toBeNull();
   });
 
-  test("P2_ENABLED_KINDS is exactly loop + date", () => {
-    expect([...P2_ENABLED_KINDS].sort()).toEqual(["date_nudge", "loop_nudge"]);
+  test("edge_nudge with zero evidence → suppress (still needs a receipt)", () => {
+    expect(
+      gateEvidence(
+        cand({ kind: "edge_nudge", subjectType: "entity_edge", evidence: [] }),
+      ),
+    ).toEqual({ decision: "suppress", reason: "evidence_insufficient" });
+  });
+
+  test("P2_ENABLED_KINDS is loop + date + edge (through P3)", () => {
+    expect([...P2_ENABLED_KINDS].sort()).toEqual([
+      "date_nudge",
+      "edge_nudge",
+      "loop_nudge",
+    ]);
   });
 });
 

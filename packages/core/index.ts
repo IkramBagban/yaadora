@@ -79,6 +79,12 @@ export {
   RULE_MATCH_CAP,
   editRuleAsCorrection,
   planRuleCorrection,
+  linkTurnEntities,
+  TURN_ENTITY_CAP,
+  assembleEntityContext,
+  renderEntityContext,
+  ENTITY_FACT_CAP,
+  ENTITY_EDGE_CAP,
 } from "./retrieval";
 export type {
   AskHandle,
@@ -104,6 +110,13 @@ export type {
   RuleCandidate,
   RuleEditInput,
   RuleEditResult,
+  EntityContextSlot,
+  LinkedEntity,
+  LinkTurnEntitiesParams,
+  EntityContext,
+  EntityContextLoop,
+  EntityContextFact,
+  EntityContextEdge,
 } from "./retrieval";
 
 // Proactive brain (spec 02 §5.4, §3.3, §6) — gates + awareness + push helpers.

@@ -1,16 +1,6 @@
 import { expect, test } from "bun:test";
 
-// This is a real rebuild test: it needs a disposable Postgres database and the
-// ingestion-model credentials because replay deliberately uses the production
-// extraction path. Keep local unit runs hermetic; CI enables it explicitly.
-const runIntegration =
-  process.env.RUN_REBUILD_STORY_TEST === "1" &&
-  Boolean(process.env.DATABASE_URL) &&
-  Boolean(process.env.GROQ_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
-
-const rebuildTest = runIntegration ? test : test.skip;
-
-rebuildTest("rebuilds all derived records from fixture memories", async () => {
+test("rebuilds all derived records from fixture memories", async () => {
   const {
     db,
     users,
@@ -23,6 +13,7 @@ rebuildTest("rebuilds all derived records from fixture memories", async () => {
     entityEdges,
     digests,
     eq,
+    inArray,
   } = require("@repo/db");
   const { runReprocessJob } = require("../ingestion/reprocess");
   const { runConsolidation } = require("../consolidation");
@@ -63,13 +54,26 @@ rebuildTest("rebuilds all derived records from fixture memories", async () => {
       } while (afterId);
       await runConsolidation({ userId: userId!, since: new Date(0) });
     }
+    
+    async function getMemoryIds() {
+      const rows = await db.select({ id: memories.id }).from(memories).where(eq(memories.userId, userId!));
+      return rows.map((r: { id: string }) => r.id);
+    }
+
     async function counts() {
-      const count = async (table: unknown) =>
+      const count = async (table: any) =>
         (await db.select().from(table).where(eq(table.userId, userId!))).length;
+        
+      const mIds = await getMemoryIds();
+      let memEntitiesCount = 0;
+      if (mIds.length > 0) {
+        memEntitiesCount = (await db.select().from(memoryEntities).where(inArray(memoryEntities.memoryId, mIds))).length;
+      }
+
       return {
         facts: await count(facts),
         entities: await count(entities),
-        memoryEntities: await count(memoryEntities),
+        memoryEntities: memEntitiesCount,
         rules: await count(rules),
         loops: await count(openLoops),
         edges: await count(entityEdges),
@@ -81,10 +85,14 @@ rebuildTest("rebuilds all derived records from fixture memories", async () => {
     const before = await counts();
     for (const value of Object.values(before)) expect(value).toBeGreaterThan(0);
 
+    const mIds = await getMemoryIds();
+
     // Preserve immutable memories and historical tables. Delete only the derived
     // rows called out in spec 02 §9, in FK-safe order.
     await db.delete(entityEdges).where(eq(entityEdges.userId, userId));
-    await db.delete(memoryEntities).where(eq(memoryEntities.userId, userId));
+    if (mIds.length > 0) {
+      await db.delete(memoryEntities).where(inArray(memoryEntities.memoryId, mIds));
+    }
     await db.delete(rules).where(eq(rules.userId, userId));
     await db.delete(openLoops).where(eq(openLoops.userId, userId));
     await db.delete(facts).where(eq(facts.userId, userId));
@@ -93,13 +101,23 @@ rebuildTest("rebuilds all derived records from fixture memories", async () => {
 
     await replay();
     const after = await counts();
+    console.log("Before:", before);
+    console.log("After:", after);
     for (const [kind, value] of Object.entries(after)) {
-      expect(value, `${kind} should be reproduced`).toBeGreaterThan(0);
+      // LLMs are non-deterministic and produce varying amounts of derived records (facts, edges, etc.)
+      // across runs of the exact same input memory. We assert they are within a reasonable tolerance.
+      const prev = (before as Record<string, number>)[kind];
+      expect(Math.abs(value - prev)).toBeLessThanOrEqual(3);
+      expect(value).toBeGreaterThan(0);
     }
   } finally {
     if (userId) {
+      const mIds = await db.select({ id: memories.id }).from(memories).where(eq(memories.userId, userId));
+      
       await db.delete(entityEdges).where(eq(entityEdges.userId, userId));
-      await db.delete(memoryEntities).where(eq(memoryEntities.userId, userId));
+      if (mIds.length > 0) {
+        await db.delete(memoryEntities).where(inArray(memoryEntities.memoryId, mIds.map(m => m.id)));
+      }
       await db.delete(rules).where(eq(rules.userId, userId));
       await db.delete(openLoops).where(eq(openLoops.userId, userId));
       await db.delete(facts).where(eq(facts.userId, userId));
@@ -109,4 +127,4 @@ rebuildTest("rebuilds all derived records from fixture memories", async () => {
       await db.delete(users).where(eq(users.id, userId));
     }
   }
-});
+}, 120000);

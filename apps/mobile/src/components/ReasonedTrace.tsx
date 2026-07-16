@@ -23,19 +23,29 @@ export function ReasonedTrace({ steps }: { steps: AskStep[] }) {
 
   const searches = steps.filter((s) => s.kind === 'search');
   const ruleSteps = steps.filter((s) => s.kind === 'rule');
-  if (searches.length < 2 && ruleSteps.length === 0) return null;
+  const entitySteps = steps.filter((s) => s.kind === 'entity');
+  if (searches.length < 2 && ruleSteps.length === 0 && entitySteps.length === 0)
+    return null;
+
+  const parts: string[] = [];
+  if (searches.length >= 2) parts.push(`${searches.length} lookups`);
+  if (ruleSteps.length > 0)
+    parts.push(`${ruleSteps.length} rule${ruleSteps.length === 1 ? '' : 's'}`);
+  if (entitySteps.length > 0)
+    parts.push(
+      `${entitySteps.length} ${entitySteps.length === 1 ? 'person/project' : 'people/projects'}`,
+    );
 
   const chipLabel =
-    ruleSteps.length > 0 && searches.length < 2
+    ruleSteps.length > 0 && searches.length < 2 && entitySteps.length === 0
       ? ruleSteps.length === 1
         ? 'Applied your rule'
         : `Applied ${ruleSteps.length} rules`
-      : ruleSteps.length > 0
-        ? `Reasoned · ${searches.length} lookups · ${ruleSteps.length} rule${ruleSteps.length === 1 ? '' : 's'}`
-        : `Reasoned · ${searches.length} lookups`;
+      : `Reasoned · ${parts.join(' · ')}`;
 
   const visibleSteps: AskStep[] = [
     ...ruleSteps,
+    ...entitySteps,
     ...(searches.length >= 2 ? searches : []),
   ];
 
