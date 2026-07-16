@@ -1,10 +1,16 @@
-import { test, expect } from "bun:test";
-import {
+import { test, expect, mock } from "bun:test";
+
+mock.module("@repo/db", () => ({
+  getDigest: async () => null,
+  getDueOpenLoops: async () => [],
+}));
+
+const {
   buildContextPackText,
   estimateTokens,
   CONTEXT_PACK_TOKEN_BUDGET,
-  type ContextPackSlots,
-} from "./context-pack";
+} = require("./context-pack");
+type ContextPackSlots = import("./context-pack").ContextPackSlots;
 
 /**
  * The load-bearing invariant of the context pack (spec 02 §4): whatever the

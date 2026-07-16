@@ -9,7 +9,7 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test ingestion/pipeline.test.ts && bun test retrieval/context-pack.test.ts && bun test eval/rebuild-story.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.7",

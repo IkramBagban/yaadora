@@ -94,6 +94,7 @@ function metaCaptureProcessed(meta: unknown): boolean {
 async function processIdleConversation(convo: {
   id: string;
   userId: string;
+  summary: string | null;
 }): Promise<void> {
   const turns = await db
     .select({
@@ -107,16 +108,26 @@ async function processIdleConversation(convo: {
     .where(eq(conversationTurns.conversationId, convo.id))
     .orderBy(asc(conversationTurns.createdAt));
 
-  const summary = await generateConversationSummary(
-    turns.map((t) => ({ role: t.role, content: t.content })),
-  );
+  const summary =
+    convo.summary ??
+    (await generateConversationSummary(
+      turns.map((t) => ({ role: t.role, content: t.content })),
+    ));
+
+  if (!summary) {
+    log.warn("conversation summary unavailable; leaving conversation active", {
+      conversationId: convo.id,
+      userId: convo.userId,
+    });
+    return;
+  }
 
   // Mark idle + write summary first so retention can act.
   await db
     .update(conversations)
     .set({
       status: "idle",
-      ...(summary ? { summary } : {}),
+      summary,
     })
     .where(
       and(eq(conversations.id, convo.id), eq(conversations.status, "active")),
@@ -166,21 +177,19 @@ async function processIdleConversation(convo: {
     );
 
   // Retention 0 = digest immediately once a summary exists.
-  if (summary) {
-    const [user] = await db
-      .select({ retention: users.transcriptRetentionDays })
-      .from(users)
-      .where(eq(users.id, convo.userId))
-      .limit(1);
-    if (user?.retention === 0) {
-      await db
-        .delete(conversationTurns)
-        .where(eq(conversationTurns.conversationId, convo.id));
-      log.info("immediate digest: turns pruned", {
-        conversationId: convo.id,
-        userId: convo.userId,
-      });
-    }
+  const [user] = await db
+    .select({ retention: users.transcriptRetentionDays })
+    .from(users)
+    .where(eq(users.id, convo.userId))
+    .limit(1);
+  if (user?.retention === 0) {
+    await db
+      .delete(conversationTurns)
+      .where(eq(conversationTurns.conversationId, convo.id));
+    log.info("immediate digest: turns pruned", {
+      conversationId: convo.id,
+      userId: convo.userId,
+    });
   }
 
   log.info("conversation marked idle", {
@@ -198,6 +207,7 @@ async function runIdleSweep(): Promise<number> {
     .select({
       id: conversations.id,
       userId: conversations.userId,
+      summary: conversations.summary,
     })
     .from(conversations)
     .where(

@@ -1,9 +1,13 @@
 import { streamText, tool, stepCountIs, hasToolCall, type ModelMessage } from "ai";
 import { z } from "zod";
 import { db, users, reminders, eq } from "@repo/db";
+import { createLogger } from "@repo/logger";
 import { reasoningModel } from "../ai/models";
 import { retrieveMemories } from "./search";
 import { REFUSAL_TEXT, type Citation } from "./answer";
+import { assembleContextPack } from "./context-pack";
+
+const log = createLogger("retrieval:agent");
 
 /**
  * The conversational Ask agent (spec 02 §3–§4, NEXT_FEATURES §1–2).
@@ -65,8 +69,8 @@ function formatNow(now: Date, timezone: string): string {
   }
 }
 
-function systemPrompt(now: Date, timezone: string): string {
-  return `You are Yaadora, the user's second brain. When a question is actually about something in the user's life — an event, fact, person, preference, or anything they'd expect you to remember — you answer ONLY from their own captured memories, looked up with the search_memories tool. You never use outside knowledge and you never invent a memory.
+function systemPrompt(now: Date, timezone: string, contextPackText = ""): string {
+  const prompt = `You are Yaadora, the user's second brain. When a question is actually about something in the user's life — an event, fact, person, preference, or anything they'd expect you to remember — you answer ONLY from their own captured memories, looked up with the search_memories tool. You never use outside knowledge and you never invent a memory.
 
 Current date/time: ${formatNow(now, timezone)}
 
@@ -101,6 +105,9 @@ Asking back (rare — prefer to infer):
 - First resolve follow-ups from the conversation so far. A plain topic follow-up like "any about travelling?" or "what about work?" right after a broader question is NOT ambiguous — treat it as a fresh search on that topic and answer it. Don't ask the user what they mean.
 - Only use the clarify tool when the question genuinely can't be answered without more info — multiple distinct people/things it could refer to, or a missing timeframe you truly can't infer. When you do, offer 2–4 concrete options drawn from the memories you found.
 - When in doubt, search and answer rather than clarify.`;
+  return contextPackText
+    ? `${prompt}\n--- BEGIN CONTEXT PACK ---\n${contextPackText}\n--- END CONTEXT PACK ---`
+    : prompt;
 }
 
 /**
@@ -130,6 +137,15 @@ export async function answerQuestion(params: {
       .where(eq(users.id, userId))
       .limit(1);
     timezone = user?.timezone ?? "UTC";
+  }
+
+  // The pack is helpful working memory, never a dependency for an Ask turn.
+  // Keep a failed read invisible to the user and continue with the normal agent.
+  let contextPackText = "";
+  try {
+    contextPackText = (await assembleContextPack({ userId, now })).text;
+  } catch (err) {
+    log.warn("context pack assembly failed; continuing without it", err as Error);
   }
 
   // Shared, mutable state accumulated across tool calls (groundedness lives here).
@@ -269,7 +285,7 @@ export async function answerQuestion(params: {
 
   const stream = streamText({
     model: reasoningModel,
-    system: systemPrompt(now, timezone),
+    system: systemPrompt(now, timezone, contextPackText),
     messages,
     tools,
     stopWhen: [stepCountIs(MAX_STEPS), hasToolCall("clarify")],

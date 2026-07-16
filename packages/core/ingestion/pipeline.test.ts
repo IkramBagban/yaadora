@@ -56,6 +56,7 @@ mock.module("@repo/db", () => ({
   and: () => ({}),
   inArray: () => ({}),
   sql: () => ({}),
+  toVectorLiteral: (embedding: number[]) => `[${embedding.join(",")}]`,
   findEntityCandidates: async () => [],
   findSupersessionCandidates: async () => [],
 }));

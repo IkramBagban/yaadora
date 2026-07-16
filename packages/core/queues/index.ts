@@ -79,6 +79,7 @@ export const REPROCESS_QUEUE_NAME = "reprocess";
 
 export interface ReprocessJobData {
   afterId?: string;
+  userId?: string;
 }
 
 export const REPROCESS_JOB_OPTS: JobsOptions = {

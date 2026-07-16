@@ -9,6 +9,7 @@ import {
   and,
   inArray,
   sql,
+  toVectorLiteral,
 } from "@repo/db";
 import type { NewFact } from "@repo/db";
 import { createLogger } from "@repo/logger";
@@ -174,7 +175,10 @@ export async function resolveOpenLoop(params: {
   )];
   if (!entityIds.length) return null;
 
-  const distance = sql<number>`(${openLoops.embedding} <=> ${embedding})`;
+  // Drizzle cannot bind a JavaScript number[] as a pgvector parameter. Keep
+  // vector serialization in @repo/db alongside every other vector query.
+  const vector = toVectorLiteral(embedding);
+  const distance = sql<number>`(${openLoops.embedding} <=> ${vector}::vector)`;
   const [candidate] = await db
     .select({ id: openLoops.id, distance })
     .from(openLoops)
@@ -276,12 +280,20 @@ export async function runIngestion(memoryId: string): Promise<void> {
   //    [ raw memory text, ...each fact text, ...each mention name ].
   const factTexts = extraction.facts.map((f) => f.factText);
   const mentionNames = extraction.entities.map((e) => e.canonicalGuess);
-  const ruleTrigger = extraction.standingRule?.triggerText ?? null;
-  const loopTitles = extraction.openLoops.map((loop) => loop.title);
-  const resolveHint = extraction.resolvesLoop;
-  const derivedTexts = [ruleTrigger, ...loopTitles, resolveHint].filter(
-    (value): value is string => Boolean(value?.trim()),
+  const derivedTexts: string[] = [];
+  const addDerivedText = (text: string | null): number | null => {
+    const normalized = text?.trim();
+    if (!normalized) return null;
+    derivedTexts.push(normalized);
+    return derivedTexts.length - 1;
+  };
+  // Keep each semantic field's embedding index beside the text insertion. This
+  // prevents a blank optional field from shifting a later loop/resolution vector.
+  const ruleEmbeddingIndex = addDerivedText(extraction.standingRule?.triggerText ?? null);
+  const loopEmbeddingIndexes = extraction.openLoops.map((loop) =>
+    addDerivedText(loop.title),
   );
+  const resolutionEmbeddingIndex = addDerivedText(extraction.resolvesLoop);
   const values = [memory.rawText, ...factTexts, ...mentionNames, ...derivedTexts];
 
   const { embeddings } = await embedTexts(values);
@@ -342,14 +354,11 @@ export async function runIngestion(memoryId: string): Promise<void> {
   // 6b. Procedural rules and unfinished loops are derived only after fact
   // reconciliation. They remain rebuildable from this source memory and every
   // write is idempotent for queue retries/reprocessing.
-  let derivedIndex = 0;
-  const ruleEmbedding = ruleTrigger ? (derivedEmbeddings[derivedIndex++] ?? []) : [];
-  const loopEmbeddings = extraction.openLoops.map(
-    () => derivedEmbeddings[derivedIndex++] ?? [],
-  );
-  const resolutionEmbedding = resolveHint
-    ? (derivedEmbeddings[derivedIndex] ?? [])
-    : [];
+  const embeddingAt = (index: number | null): number[] =>
+    index === null ? [] : (derivedEmbeddings[index] ?? []);
+  const ruleEmbedding = embeddingAt(ruleEmbeddingIndex);
+  const loopEmbeddings = loopEmbeddingIndexes.map(embeddingAt);
+  const resolutionEmbedding = embeddingAt(resolutionEmbeddingIndex);
 
   await upsertStandingRule({
     userId: memory.userId,

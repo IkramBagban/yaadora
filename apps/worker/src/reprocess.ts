@@ -20,7 +20,9 @@ export function registerReprocessWorker(): Worker<ReprocessJobData> {
     REPROCESS_QUEUE_NAME,
     async (job: Job<ReprocessJobData>) => {
       const nextAfterId = await runReprocessJob(job.data);
-      if (nextAfterId) await enqueueReprocess({ afterId: nextAfterId });
+      if (nextAfterId) {
+        await enqueueReprocess({ afterId: nextAfterId, userId: job.data.userId });
+      }
     },
     {
       connection: createRedisConnection(),
