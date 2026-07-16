@@ -15,12 +15,16 @@ export {
   createRedisConnection,
   getIngestionQueue,
   enqueueIngestion,
+  REPROCESS_QUEUE_NAME,
+  REPROCESS_JOB_OPTS,
+  getReprocessQueue,
+  enqueueReprocess,
   CONSOLIDATION_QUEUE_NAME,
   CONSOLIDATION_CRON,
   getConsolidationQueue,
   scheduleNightlyConsolidation,
 } from "./queues";
-export type { IngestionJobData, ConsolidationJobData } from "./queues";
+export type { IngestionJobData, ReprocessJobData, ConsolidationJobData } from "./queues";
 
 // Nightly consolidation (spec 02 §5) — run by apps/worker on the schedule above.
 export { runConsolidation } from "./consolidation";
@@ -33,6 +37,7 @@ export type {
 export {
   runIngestion,
   markMemoryFailed,
+  runReprocessJob,
   extract,
   ExtractionSchema,
   linkEntities,
@@ -42,6 +47,7 @@ export {
 export type {
   Extraction,
   ExtractionContext,
+  ReprocessJobData as IngestionReprocessJobData,
   MentionInput,
   EntityResolution,
   CaptureGate,

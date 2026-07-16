@@ -72,6 +72,39 @@ export async function enqueueIngestion(memoryId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Reprocess queue (spec 02 §3.1) — slow, resumable replay for derived data.
+// ---------------------------------------------------------------------------
+
+export const REPROCESS_QUEUE_NAME = "reprocess";
+
+export interface ReprocessJobData {
+  afterId?: string;
+}
+
+export const REPROCESS_JOB_OPTS: JobsOptions = {
+  attempts: 3,
+  backoff: { type: "exponential", delay: 5000 },
+  removeOnComplete: true,
+  removeOnFail: false,
+};
+
+let reprocessQueue: Queue | null = null;
+
+export function getReprocessQueue(): Queue {
+  if (!reprocessQueue) {
+    reprocessQueue = new Queue(REPROCESS_QUEUE_NAME, {
+      connection: createRedisConnection(),
+    });
+  }
+  return reprocessQueue;
+}
+
+/** Start or continue a replay. One memory per job keeps the worker limiter exact. */
+export async function enqueueReprocess(data: ReprocessJobData = {}): Promise<void> {
+  await getReprocessQueue().add("reprocess-memory", data, REPROCESS_JOB_OPTS);
+}
+
+// ---------------------------------------------------------------------------
 // Consolidation queue (spec 02 §5) — the nightly "sleep" job. A single
 // repeatable job fans out over all users inside the worker.
 // ---------------------------------------------------------------------------

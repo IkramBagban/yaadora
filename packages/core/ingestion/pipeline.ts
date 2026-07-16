@@ -2,9 +2,12 @@ import {
   db,
   memories,
   reminders,
+  rules,
+  openLoops,
   users,
   eq,
   and,
+  inArray,
   sql,
 } from "@repo/db";
 import type { NewFact } from "@repo/db";
@@ -30,6 +33,10 @@ import { reconcileAndInsertFact } from "./supersession";
  */
 
 const log = createLogger("ingestion:pipeline");
+
+// A resolution changes lifecycle state, so it has a considerably stricter gate
+// than ordinary retrieval. This is cosine distance (lower is closer).
+export const LOOP_RESOLUTION_MAX_DISTANCE = 0.12;
 
 function parseDate(iso: string | null): Date | null {
   if (!iso) return null;
@@ -116,6 +123,120 @@ function resolveEntity(
   return resolution.get(key) ?? null;
 }
 
+/** Upsert the one procedural rule a source memory can derive. Retry-safe. */
+export async function upsertStandingRule(params: {
+  userId: string;
+  memoryId: string;
+  standingRule: Extraction["standingRule"];
+  triggerEmbedding: number[];
+}): Promise<void> {
+  const { userId, memoryId, standingRule, triggerEmbedding } = params;
+  if (!standingRule) return;
+
+  const [existing] = await db
+    .select({ id: rules.id })
+    .from(rules)
+    .where(and(eq(rules.userId, userId), eq(rules.sourceMemory, memoryId)))
+    .limit(1);
+
+  const values = {
+    ruleText: standingRule.ruleText.trim(),
+    triggerText: standingRule.triggerText.trim(),
+    triggerEmbedding: triggerEmbedding.length ? triggerEmbedding : null,
+  };
+  if (existing) {
+    await db.update(rules).set(values).where(eq(rules.id, existing.id));
+    return;
+  }
+  await db.insert(rules).values({ userId, sourceMemory: memoryId, ...values });
+}
+
+/**
+ * Resolve an existing loop only when extraction explicitly closed it, the source
+ * memory links to an entity, and the closest loop is a very close semantic match.
+ * Requiring all three is intentional: a false resolution is worse than silence.
+ */
+export async function resolveOpenLoop(params: {
+  userId: string;
+  memoryId: string;
+  resolvesLoop: Extraction["resolvesLoop"];
+  resolution: EntityResolution;
+  extractedEntities: Extraction["entities"];
+  embedding: number[];
+}): Promise<string | null> {
+  const { userId, memoryId, resolvesLoop, resolution, extractedEntities, embedding } = params;
+  if (!resolvesLoop?.trim() || !embedding.length) return null;
+
+  const entityIds = [...new Set(
+    extractedEntities
+      .map((entity) => resolveEntity(entity.surface, resolution))
+      .filter((id): id is string => id !== null),
+  )];
+  if (!entityIds.length) return null;
+
+  const distance = sql<number>`(${openLoops.embedding} <=> ${embedding})`;
+  const [candidate] = await db
+    .select({ id: openLoops.id, distance })
+    .from(openLoops)
+    .where(
+      and(
+        eq(openLoops.userId, userId),
+        eq(openLoops.status, "open"),
+        inArray(openLoops.entityId, entityIds),
+      ),
+    )
+    .orderBy(distance)
+    .limit(1);
+
+  if (!candidate || candidate.distance > LOOP_RESOLUTION_MAX_DISTANCE) return null;
+  await db
+    .update(openLoops)
+    .set({ status: "resolved", resolvedBy: memoryId })
+    .where(and(eq(openLoops.id, candidate.id), eq(openLoops.status, "open")));
+  return candidate.id;
+}
+
+/** Upsert every loop derived from a source memory. Retry-safe by source + shape. */
+export async function upsertOpenLoops(params: {
+  userId: string;
+  memoryId: string;
+  loops: Extraction["openLoops"];
+  resolution: EntityResolution;
+  embeddings: number[][];
+}): Promise<void> {
+  const { userId, memoryId, loops, resolution, embeddings } = params;
+  for (let i = 0; i < loops.length; i++) {
+    const loop = loops[i]!;
+    const title = loop.title.trim();
+    if (!title) continue;
+    const entityId = loop.entityRef ? resolveEntity(loop.entityRef, resolution) : null;
+    const [existing] = await db
+      .select({ id: openLoops.id })
+      .from(openLoops)
+      .where(
+        and(
+          eq(openLoops.userId, userId),
+          eq(openLoops.sourceMemory, memoryId),
+          eq(openLoops.kind, loop.kind),
+          eq(openLoops.title, title),
+        ),
+      )
+      .limit(1);
+    if (existing) continue;
+
+    const embedding = embeddings[i] ?? [];
+    await db.insert(openLoops).values({
+      userId,
+      kind: loop.kind,
+      title,
+      entityId,
+      dueAt: parseDate(loop.dueAt),
+      sourceMemory: memoryId,
+      embedding: embedding.length ? embedding : null,
+    });
+  }
+}
+
 export async function runIngestion(memoryId: string): Promise<void> {
   // 1. Load the memory + its owner (timezone + createdAt drive temporal resolution).
   const [memory] = await db
@@ -155,13 +276,22 @@ export async function runIngestion(memoryId: string): Promise<void> {
   //    [ raw memory text, ...each fact text, ...each mention name ].
   const factTexts = extraction.facts.map((f) => f.factText);
   const mentionNames = extraction.entities.map((e) => e.canonicalGuess);
-  const values = [memory.rawText, ...factTexts, ...mentionNames];
+  const ruleTrigger = extraction.standingRule?.triggerText ?? null;
+  const loopTitles = extraction.openLoops.map((loop) => loop.title);
+  const resolveHint = extraction.resolvesLoop;
+  const derivedTexts = [ruleTrigger, ...loopTitles, resolveHint].filter(
+    (value): value is string => Boolean(value?.trim()),
+  );
+  const values = [memory.rawText, ...factTexts, ...mentionNames, ...derivedTexts];
 
   const { embeddings } = await embedTexts(values);
 
   const rawEmbedding = embeddings[0];
   const factEmbeddings = embeddings.slice(1, 1 + factTexts.length);
   const mentionEmbeddings = embeddings.slice(1 + factTexts.length);
+  const derivedEmbeddings = embeddings.slice(
+    1 + factTexts.length + mentionNames.length,
+  );
 
   // 5. Entity extraction + linking (§2.3).
   const mentions: MentionInput[] = extraction.entities.map((e, i) => ({
@@ -209,7 +339,43 @@ export async function runIngestion(memoryId: string): Promise<void> {
     });
   }
 
-  // 6b. Prospective intent OR a future-dated event → a suggested reminder the
+  // 6b. Procedural rules and unfinished loops are derived only after fact
+  // reconciliation. They remain rebuildable from this source memory and every
+  // write is idempotent for queue retries/reprocessing.
+  let derivedIndex = 0;
+  const ruleEmbedding = ruleTrigger ? (derivedEmbeddings[derivedIndex++] ?? []) : [];
+  const loopEmbeddings = extraction.openLoops.map(
+    () => derivedEmbeddings[derivedIndex++] ?? [],
+  );
+  const resolutionEmbedding = resolveHint
+    ? (derivedEmbeddings[derivedIndex] ?? [])
+    : [];
+
+  await upsertStandingRule({
+    userId: memory.userId,
+    memoryId,
+    standingRule: extraction.standingRule,
+    triggerEmbedding: ruleEmbedding,
+  });
+  // Resolve before creating this memory's loops, so a broad close statement
+  // cannot accidentally close a loop it just created.
+  await resolveOpenLoop({
+    userId: memory.userId,
+    memoryId,
+    resolvesLoop: extraction.resolvesLoop,
+    resolution,
+    extractedEntities: extraction.entities,
+    embedding: resolutionEmbedding,
+  });
+  await upsertOpenLoops({
+    userId: memory.userId,
+    memoryId,
+    loops: extraction.openLoops,
+    resolution,
+    embeddings: loopEmbeddings,
+  });
+
+  // 6c. Prospective intent OR a future-dated event → a suggested reminder the
   //     user can confirm/dismiss.
   await maybeSuggestReminder({
     userId: memory.userId,

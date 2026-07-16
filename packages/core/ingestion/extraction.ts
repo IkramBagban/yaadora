@@ -44,6 +44,30 @@ export const ExtractionSchema = z.object({
       text: z.string().nullable(),
     })
     .nullable(),
+  // Procedural memory is deliberately separate from a preference: it must tell
+  // the system how to behave when a concrete situation occurs.
+  standingRule: z
+    .object({
+      ruleText: z.string().min(1),
+      triggerText: z.string().min(1),
+    })
+    .nullable(),
+  openLoops: z.array(
+    z.object({
+      kind: z.enum([
+        "commitment",
+        "unresolved_conflict",
+        "upcoming_event",
+        "goal",
+      ]),
+      title: z.string().min(1),
+      // An entity is optional in storage; preserve that distinction rather than
+      // inventing a link when the memory does not name one.
+      entityRef: z.string().nullable(),
+      dueAt: z.string().nullable(),
+    }),
+  ),
+  resolvesLoop: z.string().min(1).nullable(),
 });
 
 export type Extraction = z.infer<typeof ExtractionSchema>;
@@ -65,6 +89,20 @@ Rules:
   Set validFrom to the ISO time the fact became true, or null.
 - INTENT: if the memory implies a future action ("call the bank Friday"), fill intent
   with a resolved absolute dueAt; otherwise set intent to null.
+- STANDING RULE: set standingRule ONLY for an explicit conditional instruction about
+  future behavior: "when I X, do/check Y". ruleText is the instruction faithfully
+  stated; triggerText describes the situation in which it applies (not keywords).
+  A taste, preference, aspiration, or one-off request is NOT a standing rule. If
+  uncertain, return null.
+- OPEN LOOPS: extract only explicitly unfinished commitments, unresolved conflicts,
+  clearly dated upcoming events, or stated goals. Do not turn ordinary plans,
+  preferences, or speculative possibilities into loops. entityRef is the named
+  entity surface when one is explicit, otherwise null. Resolve dueAt to ISO 8601
+  when it is explicit; otherwise null. Return [] when uncertain.
+- RESOLVES LOOP: set resolvesLoop only when this memory clearly says an existing
+  unfinished matter was completed, settled, cancelled, or otherwise closed. It is
+  a short faithful description of the closed matter, not an inference. Otherwise
+  return null.
 Never invent details not present in the memory.`;
 
 export interface ExtractionContext {

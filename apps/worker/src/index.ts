@@ -15,6 +15,7 @@ import {
   scheduleConversationMaintenance,
   startConversationMaintenanceWorker,
 } from "./conversation-maintenance";
+import { registerReprocessWorker } from "./reprocess";
 
 // Declare this process's log target FIRST — every log line (including those
 // from @repo/core's ingestion/consolidation) is written to logs/worker.log in
@@ -117,6 +118,10 @@ const consolidationWorker = new Worker<ConsolidationJobData>(
   { connection: createRedisConnection(), concurrency: 1 },
 );
 
+// Historical replay has its own rate-limited worker, so normal capture
+// ingestion remains responsive. An operator starts it with enqueueReprocess().
+const reprocessWorker = registerReprocessWorker();
+
 consolidationWorker.on("error", (err) => {
   log.error("consolidation worker error", err);
 });
@@ -141,10 +146,11 @@ async function shutdown(signal: string) {
     worker.close(),
     consolidationWorker.close(),
     conversationMaintenanceWorker.close(),
+    reprocessWorker.close(),
   ]);
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-log.info("starting ingestion + consolidation + conversation-maintenance workers");
+log.info("starting ingestion + consolidation + conversation-maintenance + reprocess workers");

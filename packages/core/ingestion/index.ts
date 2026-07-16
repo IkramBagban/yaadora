@@ -7,6 +7,8 @@ export { linkEntities } from "./linking";
 export type { MentionInput, EntityResolution } from "./linking";
 export { reconcileAndInsertFact } from "./supersession";
 export type { ReconcileInput } from "./supersession";
+export { runReprocessJob } from "./reprocess";
+export type { ReprocessJobData } from "./reprocess";
 export {
   captureFromConversation,
   CaptureGateSchema,
