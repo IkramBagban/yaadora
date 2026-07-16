@@ -21,5 +21,8 @@ export const notFound = (message = "Not found.") =>
 export const badRequest = (message: string) =>
   apiError("bad_request", message, 400);
 
+export const conflict = (message: string) =>
+  apiError("conflict", message, 409);
+
 export const serverError = (message = "Internal error.") =>
   apiError("internal_error", message, 500);

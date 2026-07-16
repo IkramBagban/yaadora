@@ -1,19 +1,28 @@
 import { z } from "zod";
 import { editRuleAsCorrection } from "@repo/core";
-import { db, rules, eq, and, desc, sql } from "@repo/db";
+import { db, rules, eq, and, desc, isNull, sql } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
-import { badRequest, json, notFound, unauthorized, serverError } from "../http";
+import {
+  badRequest,
+  conflict,
+  json,
+  notFound,
+  unauthorized,
+  serverError,
+} from "../http";
 
 const log = createLogger("server:rules");
 
 /**
  * Standing rules API (spec 02 §8, P1).
  *
- * GET  /rules         — list (active first; appliedCount, lastAppliedAt)
- * PATCH /rules/:id    — { active } toggles metadata;
+ * GET  /rules         — list head rules only (superseded_by IS NULL);
+ *                       active first; appliedCount, lastAppliedAt
+ * PATCH /rules/:id    — { active } toggles metadata on a head rule;
  *                       { ruleText? | triggerText? } is EDIT-AS-CORRECTION
  *                       (new memory + new rule row; old superseded, never mutated).
+ * Superseded historical rows are not listed and cannot be reactivated or edited.
  */
 
 function serializeRule(row: {
@@ -40,7 +49,7 @@ function serializeRule(row: {
   };
 }
 
-/** GET /rules — active first, then by last applied / created. */
+/** GET /rules — head rules only, active first, then by last applied / created. */
 export async function listRules(req: Request): Promise<Response> {
   const userId = await authenticate(req);
   if (!userId) return unauthorized();
@@ -59,7 +68,7 @@ export async function listRules(req: Request): Promise<Response> {
         supersededBy: rules.supersededBy,
       })
       .from(rules)
-      .where(eq(rules.userId, userId))
+      .where(and(eq(rules.userId, userId), isNull(rules.supersededBy)))
       .orderBy(
         // active first (true > false), then most recently applied, then newest.
         desc(rules.active),
@@ -89,7 +98,7 @@ const PatchBody = z
     { message: "At least one of active, ruleText, or triggerText is required." },
   );
 
-/** PATCH /rules/:id — toggle active and/or edit-as-correction. */
+/** PATCH /rules/:id — toggle active and/or edit-as-correction (head rules only). */
 export async function patchRule(
   req: Request,
   ruleId: string,
@@ -131,6 +140,14 @@ export async function patchRule(
 
     if (!existing) return notFound("Rule not found.");
 
+    // Historical versions are immutable and not reactivatable (prevents dual
+    // active rules with overlapping triggers).
+    if (existing.supersededBy) {
+      return conflict(
+        "This rule was superseded by a newer version and cannot be edited or reactivated. Use the current rule instead.",
+      );
+    }
+
     const wantsEdit =
       parsed.data.ruleText !== undefined ||
       parsed.data.triggerText !== undefined;
@@ -138,25 +155,46 @@ export async function patchRule(
     // Edit-as-correction supersedes the old row. Active toggle on the *new*
     // row can still be applied after; if only active, update metadata in place.
     if (wantsEdit) {
-      const result = await editRuleAsCorrection({
-        userId,
-        ruleId,
-        ruleText: parsed.data.ruleText,
-        triggerText: parsed.data.triggerText,
-      });
+      let result;
+      try {
+        result = await editRuleAsCorrection({
+          userId,
+          ruleId,
+          ruleText: parsed.data.ruleText,
+          triggerText: parsed.data.triggerText,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("concurrent edit")) {
+          return conflict(
+            "Rule was updated concurrently; refresh and retry against the current version.",
+          );
+        }
+        throw err;
+      }
 
       if (!result) {
-        // No-op text (identical) — optionally still toggle active on old row.
+        // No-op text (identical) or race where row became superseded — optionally
+        // still toggle active on the old head row.
         if (parsed.data.active === undefined) {
           return json(serializeRule(existing));
         }
       } else {
         let newRow = result.newRule;
-        if (parsed.data.active !== undefined && parsed.data.active !== newRow.active) {
+        if (
+          parsed.data.active !== undefined &&
+          parsed.data.active !== newRow.active
+        ) {
           const [updated] = await db
             .update(rules)
             .set({ active: parsed.data.active })
-            .where(and(eq(rules.id, newRow.id), eq(rules.userId, userId)))
+            .where(
+              and(
+                eq(rules.id, newRow.id),
+                eq(rules.userId, userId),
+                isNull(rules.supersededBy),
+              ),
+            )
             .returning({
               id: rules.id,
               ruleText: rules.ruleText,
@@ -183,7 +221,13 @@ export async function patchRule(
       const [updated] = await db
         .update(rules)
         .set({ active: parsed.data.active })
-        .where(and(eq(rules.id, ruleId), eq(rules.userId, userId)))
+        .where(
+          and(
+            eq(rules.id, ruleId),
+            eq(rules.userId, userId),
+            isNull(rules.supersededBy),
+          ),
+        )
         .returning({
           id: rules.id,
           ruleText: rules.ruleText,
@@ -195,7 +239,12 @@ export async function patchRule(
           createdAt: rules.createdAt,
           supersededBy: rules.supersededBy,
         });
-      if (!updated) return notFound("Rule not found.");
+      if (!updated) {
+        // Became superseded between select and update.
+        return conflict(
+          "This rule was superseded by a newer version and cannot be edited or reactivated.",
+        );
+      }
       log.info("rule active toggled", {
         userId,
         ruleId,

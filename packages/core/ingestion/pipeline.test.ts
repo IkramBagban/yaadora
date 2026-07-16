@@ -103,7 +103,9 @@ describe("procedural extraction fields", () => {
 });
 
 describe("derived pipeline stages", () => {
-  test("updates an existing rule instead of creating a retry duplicate", async () => {
+  test("does not mutate an existing rule on re-ingest (insert-if-absent)", async () => {
+    // A rule already owns this sourceMemory (e.g. edit-as-correction pre-insert
+    // or a prior successful ingestion). Never UPDATE its text — immutability.
     state.selectRows = [[{ id: "rule-1" }]];
     state.inserts = [];
     state.updates = [];
@@ -114,16 +116,28 @@ describe("derived pipeline stages", () => {
       triggerEmbedding: [0.1],
     });
     expect(state.inserts).toHaveLength(0);
-    expect(state.updates).toEqual([
-      {
-        table: expect.anything(),
-        values: {
-          ruleText: "Check it",
-          triggerText: "before publishing",
-          triggerEmbedding: [0.1],
-        },
-      },
-    ]);
+    expect(state.updates).toHaveLength(0);
+  });
+
+  test("inserts a standing rule when none exists for the source memory", async () => {
+    state.selectRows = [[]];
+    state.inserts = [];
+    state.updates = [];
+    await upsertStandingRule({
+      userId: "user",
+      memoryId: "memory",
+      standingRule: { ruleText: "Check it", triggerText: "before publishing" },
+      triggerEmbedding: [0.1],
+    });
+    expect(state.updates).toHaveLength(0);
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0]!.values).toMatchObject({
+      userId: "user",
+      sourceMemory: "memory",
+      ruleText: "Check it",
+      triggerText: "before publishing",
+      triggerEmbedding: [0.1],
+    });
   });
 
   test("resolves only an entity-matched, high-confidence existing loop", async () => {
