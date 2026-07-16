@@ -1,11 +1,28 @@
 import { streamText, tool, stepCountIs, hasToolCall, type ModelMessage } from "ai";
 import { z } from "zod";
-import { db, users, reminders, eq } from "@repo/db";
+import {
+  db,
+  users,
+  reminders,
+  rules,
+  surfacings,
+  eq,
+  sql,
+} from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { reasoningModel } from "../ai/models";
 import { retrieveMemories } from "./search";
 import { REFUSAL_TEXT, type Citation } from "./answer";
-import { assembleContextPack } from "./context-pack";
+import {
+  assembleContextPack,
+  buildContextPackText,
+  type RuleSlot,
+} from "./context-pack";
+import {
+  matchStandingRules,
+  shortRuleName,
+  type MatchedRule,
+} from "./rule-matcher";
 
 const log = createLogger("retrieval:agent");
 
@@ -18,8 +35,8 @@ const log = createLogger("retrieval:agent");
  * question needs, and either answers — grounded ONLY in what it retrieved — or
  * asks the user back when the question is genuinely ambiguous.
  *
- * The server stays stateless: `history` is the ephemeral transcript the client
- * replays each turn. Nothing is persisted here.
+ * The server stays RAM-stateless: history is loaded from durable turns (or the
+ * client-replayed transcript for the /ask shim). Nothing is held in process RAM.
  */
 
 export type AskMode = "recall" | "reason" | "clarify";
@@ -31,7 +48,7 @@ export interface AskHistoryTurn {
 
 /** A single visible step in the agent's trace (emitted live + summarised). */
 export interface AskStep {
-  kind: "search" | "clarify" | "synthesize" | "reminder";
+  kind: "search" | "clarify" | "synthesize" | "reminder" | "rule";
   label: string;
   query?: string;
   count?: number;
@@ -44,6 +61,10 @@ export interface AskResult {
   steps: AskStep[];
   /** disambiguation candidates when mode === "clarify" (2–4 short strings) */
   clarifyOptions?: string[];
+  /** standing rules applied this turn (meta.ruleIdsApplied) */
+  ruleIdsApplied: string[];
+  /** ledger rows written for rule applications (meta.surfacingIds) */
+  surfacingIds: string[];
 }
 
 export interface AskHandle {
@@ -97,6 +118,10 @@ Answering — talk like a friend who remembers, not a database:
 - For pure conversational turns (no search performed), just respond naturally — the groundedness rule only applies to memory-derived claims, not to a greeting or to explaining your own earlier wording.
 - Do NOT add citation tags or "(memory ...)" — sources are shown to the user separately.
 
+Standing rules (context pack):
+- Standing rules listed in the context pack override generic behavior for the matched task and must be applied VISIBLY — the rule shapes the answer itself, it is not just mentioned.
+- If a rule lists explicit check questions or criteria, address EACH one by name in the answer (as short headed sections or a clear checklist) so the user can see every criterion applied. Do not substitute a generic writing review that only vaguely nods at the rule.
+
 Setting reminders:
 - You have a set_reminder tool. Use it ONLY when the user explicitly asks to be reminded or to set/schedule a reminder ("remind me to …", "set a reminder for …"). Resolve the time to an absolute moment from the current date/time above, call set_reminder(text, dueAt), then confirm in one short line (e.g. "Done — I'll remind you Sunday at 3 PM."). If they ask for a reminder but give no usable time, ask for the time instead of guessing.
 - Do NOT call set_reminder for things the user only mentions in passing ("I have a meeting Sunday") — those are handled separately as a suggestion. Only act when they actually ask you to set one.
@@ -108,6 +133,56 @@ Asking back (rare — prefer to infer):
   return contextPackText
     ? `${prompt}\n--- BEGIN CONTEXT PACK ---\n${contextPackText}\n--- END CONTEXT PACK ---`
     : prompt;
+}
+
+/**
+ * Record rule applications: bump apply_count/last_applied_at and write
+ * `rule_applied` ledger rows (exempt from nudge budgets — spec 02 §2.4).
+ */
+async function recordRuleApplications(params: {
+  userId: string;
+  conversationId?: string | null;
+  matched: MatchedRule[];
+  now: Date;
+}): Promise<{ ruleIdsApplied: string[]; surfacingIds: string[] }> {
+  const { userId, conversationId, matched, now } = params;
+  const ruleIdsApplied: string[] = [];
+  const surfacingIds: string[] = [];
+
+  for (const rule of matched) {
+    try {
+      await db
+        .update(rules)
+        .set({
+          lastAppliedAt: now,
+          applyCount: sql`${rules.applyCount} + 1`,
+        })
+        .where(eq(rules.id, rule.id));
+
+      const [row] = await db
+        .insert(surfacings)
+        .values({
+          userId,
+          kind: "rule_applied",
+          subjectType: "rule",
+          subjectId: rule.id,
+          channel: "conversation",
+          conversationId: conversationId ?? null,
+          evidence: [rule.sourceMemory],
+        })
+        .returning({ id: surfacings.id });
+
+      ruleIdsApplied.push(rule.id);
+      if (row) surfacingIds.push(row.id);
+    } catch (err) {
+      log.warn("failed to record rule application", {
+        ruleId: rule.id,
+        err: err as Error,
+      });
+    }
+  }
+
+  return { ruleIdsApplied, surfacingIds };
 }
 
 /**
@@ -123,10 +198,12 @@ export async function answerQuestion(params: {
   history?: AskHistoryTurn[];
   now?: Date;
   timezone?: string;
-  /** fired live for every step (search / clarify / synthesize) as it happens */
+  /** durable conversation id for rule_applied ledger rows */
+  conversationId?: string | null;
+  /** fired live for every step (search / clarify / synthesize / rule) as it happens */
   onStep?: (step: AskStep) => void;
 }): Promise<AskHandle> {
-  const { userId, question, history = [], onStep } = params;
+  const { userId, question, history = [], onStep, conversationId } = params;
   const now = params.now ?? new Date();
 
   let timezone = params.timezone;
@@ -139,13 +216,61 @@ export async function answerQuestion(params: {
     timezone = user?.timezone ?? "UTC";
   }
 
-  // The pack is helpful working memory, never a dependency for an Ask turn.
-  // Keep a failed read invisible to the user and continue with the normal agent.
+  const previousUserTurn =
+    [...history].reverse().find((h) => h.role === "user")?.content ?? null;
+
+  // Pack SQL + rule matcher run concurrently so matching adds no serial latency
+  // (spec 02 §5.1). Either failure is non-fatal for the Ask turn.
+  let matchedRules: MatchedRule[] = [];
   let contextPackText = "";
   try {
-    contextPackText = (await assembleContextPack({ userId, now })).text;
+    const [matched, pack] = await Promise.all([
+      matchStandingRules({
+        userId,
+        userTurn: question,
+        previousUserTurn,
+      }),
+      assembleContextPack({ userId, now }).catch((err) => {
+        log.warn("context pack assembly failed; continuing without it", err as Error);
+        return null;
+      }),
+    ]);
+    matchedRules = matched;
+    if (pack) {
+      const ruleSlots: RuleSlot[] = matchedRules.map((r) => ({
+        id: r.id,
+        ruleText: r.ruleText,
+      }));
+      // Re-budget with matched rules filling the RuleSlot (renderRules already
+      // present; budget contract unchanged — spec 02 §4).
+      const { text } = buildContextPackText({
+        profile: pack.profile,
+        weekDigest: pack.weekDigest,
+        loops: pack.loops,
+        rules: ruleSlots,
+        nudge: pack.nudge,
+      });
+      contextPackText = text;
+    } else if (matchedRules.length) {
+      // Pack SQL failed but rules matched — still inject rules alone.
+      const { text } = buildContextPackText({
+        profile: null,
+        weekDigest: null,
+        loops: [],
+        rules: matchedRules.map((r) => ({ id: r.id, ruleText: r.ruleText })),
+        nudge: null,
+      });
+      contextPackText = text;
+    }
+    // Extra force when rules matched: criteria must structure the answer.
+    if (matchedRules.length && contextPackText) {
+      contextPackText +=
+        "\n\nApply the standing rule(s) above as the backbone of your reply. " +
+        "If a rule names check questions or criteria, answer them one by one " +
+        "(use the rule's own wording as short headings) before any other advice.";
+    }
   } catch (err) {
-    log.warn("context pack assembly failed; continuing without it", err as Error);
+    log.warn("pack/matcher setup failed; continuing without pack", err as Error);
   }
 
   // Shared, mutable state accumulated across tool calls (groundedness lives here).
@@ -153,6 +278,27 @@ export async function answerQuestion(params: {
   const steps: AskStep[] = [];
   let searchCount = 0;
   let topRelevance = 0;
+
+  // Emit rule steps before the main agent so the live trace shows them.
+  for (const rule of matchedRules) {
+    const step: AskStep = {
+      kind: "rule",
+      label: `Applying your rule: ${shortRuleName(rule)}`,
+    };
+    steps.push(step);
+    onStep?.(step);
+  }
+
+  // Ledger + apply counters (exempt from nudge budgets).
+  const applied =
+    matchedRules.length > 0
+      ? await recordRuleApplications({
+          userId,
+          conversationId,
+          matched: matchedRules,
+          now,
+        })
+      : { ruleIdsApplied: [] as string[], surfacingIds: [] as string[] };
 
   const tools = {
     search_memories: tool({
@@ -311,6 +457,8 @@ export async function answerQuestion(params: {
         mode,
         steps,
         clarifyOptions,
+        ruleIdsApplied: applied.ruleIdsApplied,
+        surfacingIds: applied.surfacingIds,
       });
     };
 

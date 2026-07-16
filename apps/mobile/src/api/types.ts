@@ -121,7 +121,7 @@ export interface Citation {
 
 export type AskMode = 'recall' | 'reason' | 'clarify';
 
-export type AskStepKind = 'search' | 'clarify' | 'synthesize' | 'reminder';
+export type AskStepKind = 'search' | 'clarify' | 'synthesize' | 'reminder' | 'rule';
 
 /** One visible step in the agent's reasoning trace. */
 export interface AskStep {
@@ -129,6 +129,19 @@ export interface AskStep {
   label: string;
   query?: string;
   count?: number;
+}
+
+/** GET /rules · PATCH /rules/:id */
+export interface StandingRule {
+  id: string;
+  ruleText: string;
+  triggerText: string;
+  active: boolean;
+  sourceMemory: string;
+  appliedCount: number;
+  lastAppliedAt: string | null;
+  createdAt: string;
+  supersededBy: string | null;
 }
 
 /** @deprecated History is loaded server-side from durable turns. */

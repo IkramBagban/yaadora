@@ -17,6 +17,8 @@ export function thinkingLabel(step: AskStep | null): string {
   if (!step) return 'Searching your memories…';
   if (step.kind === 'synthesize') return 'Putting it together…';
   if (step.kind === 'clarify') return 'Thinking it through…';
+  if (step.kind === 'rule') return step.label.trim() || 'Applying your rule…';
+  if (step.kind === 'reminder') return step.label.trim() || 'Setting a reminder…';
   // search
   const query = step.query?.trim() || step.label.trim();
   if (typeof step.count === 'number') {

@@ -131,7 +131,10 @@ export function AskExchange({
 
       {settled && (
         <View style={styles.footer}>
-          {exchange.mode === 'reason' && <ReasonedTrace steps={exchange.steps} />}
+          {(exchange.mode === 'reason' ||
+            exchange.steps.some((s) => s.kind === 'rule')) && (
+            <ReasonedTrace steps={exchange.steps} />
+          )}
 
           {exchange.reminderSuggestion && (
             <ReminderChip suggestion={exchange.reminderSuggestion} />

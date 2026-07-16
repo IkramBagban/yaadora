@@ -254,6 +254,7 @@ export async function streamConversationTurn(params: {
           userId,
           question,
           history,
+          conversationId,
           onStep: (step) => send({ type: "step", ...step }),
         });
 
@@ -282,8 +283,8 @@ export async function streamConversationTurn(params: {
             .map((s) => s.query)
             .filter(Boolean),
           citations: final.citations.map((c) => c.memoryId),
-          ruleIdsApplied: [] as string[],
-          surfacingIds: [] as string[],
+          ruleIdsApplied: final.ruleIdsApplied ?? [],
+          surfacingIds: final.surfacingIds ?? [],
         };
 
         await db.insert(conversationTurns).values({

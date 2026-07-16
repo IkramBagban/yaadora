@@ -45,3 +45,16 @@ export type {
   RuleSlot,
   NudgeDirective,
 } from "./context-pack";
+
+// Rules doorway (spec 02 §5.1) — task-matched standing rules.
+export {
+  matchStandingRules,
+  filterRuleCandidates,
+  shortRuleName,
+  buildTurnEmbedText,
+  RULE_SIMILARITY_THRESHOLD,
+  RULE_MATCH_CAP,
+} from "./rule-matcher";
+export type { MatchedRule, RuleCandidate } from "./rule-matcher";
+export { editRuleAsCorrection, planRuleCorrection } from "./rule-edit";
+export type { RuleEditInput, RuleEditResult } from "./rule-edit";

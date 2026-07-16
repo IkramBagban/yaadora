@@ -10,6 +10,7 @@ import type {
   Reminder,
   ReminderList,
   ReminderScope,
+  StandingRule,
 } from './types';
 
 const log = createMobileLogger('api');
@@ -333,5 +334,22 @@ export const api = {
   /** Cancel / dismiss (also used for undo). */
   cancelReminder(id: string): Promise<{ id: string; status: string }> {
     return request(`/reminders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  // --- standing rules (spec 02 §8, P1) ------------------------------------
+
+  listRules(): Promise<{ rules: StandingRule[] }> {
+    return request<{ rules: StandingRule[] }>('/rules');
+  },
+
+  /** Toggle active and/or edit-as-correction (text changes supersede the row). */
+  patchRule(
+    id: string,
+    patch: { active?: boolean; ruleText?: string; triggerText?: string },
+  ): Promise<StandingRule> {
+    return request<StandingRule>(`/rules/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
   },
 };

@@ -14,16 +14,30 @@ import { AppText } from './AppText';
 import { PressableScale } from './PressableScale';
 
 /**
- * The "Reasoned · N lookups" chip shown after a multi-lookup answer. Tapping it
- * expands the step list, so the user can see the AI actually worked — silence
- * for single-pass recall, a quiet trace for real reasoning.
+ * Trace chip after an answer: multi-lookup reasoning and/or standing rules
+ * that shaped the reply (P1 rules doorway).
  */
 export function ReasonedTrace({ steps }: { steps: AskStep[] }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
 
   const searches = steps.filter((s) => s.kind === 'search');
-  if (searches.length < 2) return null;
+  const ruleSteps = steps.filter((s) => s.kind === 'rule');
+  if (searches.length < 2 && ruleSteps.length === 0) return null;
+
+  const chipLabel =
+    ruleSteps.length > 0 && searches.length < 2
+      ? ruleSteps.length === 1
+        ? 'Applied your rule'
+        : `Applied ${ruleSteps.length} rules`
+      : ruleSteps.length > 0
+        ? `Reasoned · ${searches.length} lookups · ${ruleSteps.length} rule${ruleSteps.length === 1 ? '' : 's'}`
+        : `Reasoned · ${searches.length} lookups`;
+
+  const visibleSteps: AskStep[] = [
+    ...ruleSteps,
+    ...(searches.length >= 2 ? searches : []),
+  ];
 
   return (
     <Animated.View layout={LinearTransition.springify().damping(20).stiffness(240)}>
@@ -34,9 +48,13 @@ export function ReasonedTrace({ steps }: { steps: AskStep[] }) {
         }}
         style={[styles.chip, { backgroundColor: colors.surfaceAlt, borderColor: colors.hairline }]}
       >
-        <Feather name="git-branch" size={12} color={colors.ink3} />
+        <Feather
+          name={ruleSteps.length > 0 && searches.length < 2 ? 'bookmark' : 'git-branch'}
+          size={12}
+          color={colors.ink3}
+        />
         <AppText variant="captionMedium" tone="ink2">
-          Reasoned · {searches.length} lookups
+          {chipLabel}
         </AppText>
         <Feather
           name={open ? 'chevron-up' : 'chevron-down'}
@@ -51,16 +69,26 @@ export function ReasonedTrace({ steps }: { steps: AskStep[] }) {
           layout={LinearTransition.springify().damping(20).stiffness(240)}
           style={styles.steps}
         >
-          {searches.map((step, i) => (
+          {visibleSteps.map((step, i) => (
             <Animated.View
-              key={`${step.query ?? step.label}-${i}`}
+              key={`${step.kind}-${step.query ?? step.label}-${i}`}
               entering={FadeInDown.delay(i * 40).springify().damping(18).stiffness(220)}
               style={styles.stepRow}
             >
-              <View style={[styles.dot, { backgroundColor: colors.ink3 }]} />
+              <View
+                style={[
+                  styles.dot,
+                  {
+                    backgroundColor:
+                      step.kind === 'rule' ? colors.accent : colors.ink3,
+                  },
+                ]}
+              />
               <AppText variant="caption" tone="ink2" style={styles.stepText}>
-                {step.query?.trim() || step.label}
-                {typeof step.count === 'number' ? (
+                {step.kind === 'rule'
+                  ? step.label
+                  : step.query?.trim() || step.label}
+                {step.kind === 'search' && typeof step.count === 'number' ? (
                   <AppText variant="caption" tone="ink3">
                     {'  '}
                     {step.count} {step.count === 1 ? 'memory' : 'memories'}

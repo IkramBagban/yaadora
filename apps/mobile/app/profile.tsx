@@ -107,6 +107,24 @@ export default function ProfileScreen() {
           </View>
 
           <AppText variant="micro" tone="ink3" style={styles.sectionLabel}>
+            Second brain
+          </AppText>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+            <PressableScale
+              accessibilityRole="button"
+              accessibilityLabel="Standing rules"
+              onPress={() => router.push('/rules' as Href)}
+            >
+              <Row
+                icon={<Feather name="bookmark" size={18} color={colors.ink2} />}
+                label="Standing rules"
+                value="When a task matches, shape the answer"
+                chevron
+              />
+            </PressableScale>
+          </View>
+
+          <AppText variant="micro" tone="ink3" style={styles.sectionLabel}>
             Signed in with
           </AppText>
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
@@ -167,11 +185,13 @@ function Row({
   label,
   value,
   divider,
+  chevron,
 }: {
   icon: React.ReactNode;
   label: string;
   value?: string;
   divider?: boolean;
+  chevron?: boolean;
 }) {
   const { colors } = useTheme();
   return (
@@ -187,6 +207,7 @@ function Row({
           </AppText>
         ) : null}
       </View>
+      {chevron ? <Feather name="chevron-right" size={18} color={colors.ink3} /> : null}
     </View>
   );
 }

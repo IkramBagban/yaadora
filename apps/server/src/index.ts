@@ -25,6 +25,7 @@ import {
   getPrivacySettings,
   patchPrivacySettings,
 } from "./routes/settings";
+import { listRules, patchRule } from "./routes/rules";
 import {
   confirmReminder,
   confirmSuggestedReminder,
@@ -109,6 +110,13 @@ const server = Bun.serve({
     },
     "/surfacings/:id/reaction": {
       POST: (req) => postSurfacingReaction(req, req.params.id),
+    },
+    // Standing rules (spec 02 §8, P1)
+    "/rules": {
+      GET: (req) => listRules(req),
+    },
+    "/rules/:id": {
+      PATCH: (req) => patchRule(req, req.params.id),
     },
     "/push-tokens": {
       POST: (req) => registerPushToken(req),

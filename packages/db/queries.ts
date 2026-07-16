@@ -1121,13 +1121,16 @@ export async function getDueOpenLoops(
   within: Date,
   limit = 20,
 ): Promise<DueOpenLoop[]> {
+  // Bind as ISO text — raw Date can serialize as a non-timestamp string under
+  // postgres.js and fail the due_at comparison.
+  const withinIso = within.toISOString();
   const rows = await db.execute(sql`
     SELECT id, kind, title, due_at
     FROM open_loops
     WHERE user_id = ${userId}
       AND status = 'open'
       AND due_at IS NOT NULL
-      AND due_at <= ${within}
+      AND due_at <= ${withinIso}::timestamptz
     ORDER BY due_at ASC
     LIMIT ${limit}
   `);

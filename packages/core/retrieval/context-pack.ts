@@ -5,16 +5,15 @@ import { getDigest, getDueOpenLoops } from "@repo/db";
  * assembled fresh per `/ask` turn, so search becomes the tool for *depth*, not
  * the only door into memory (spec 01 D8).
  *
- * This is the **v1 / P0** pack: profile summary + 7-day digest + near-dated open
- * loops. The two higher-priority slots — matched standing rules (P1) and an
- * approved nudge directive (P2) — are present here only as typed no-op stubs so
- * later phases fill them without changing the assembly/budget contract.
+ * Pack slots: profile summary + 7-day digest + near-dated open loops + matched
+ * standing rules (P1, filled by the rule matcher and passed in or re-budgeted in
+ * the agent) + nudge directive (P2 stub until prospection lands).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
  *   rules > nudge > dated loops > digest > profile
  * (spec 02 §4). "Priority" means the highest-priority slots are kept first; when
  * the budget runs out the lowest-priority slot is truncated, then dropped, then
- * the next one up, and so on. Rules and nudge, being stubs, cost nothing in P0.
+ * the next one up, and so on.
  *
  * Assembly is one SQL round-trip (three cache-like reads). No LLM call — the
  * summaries were precomputed by nightly consolidation (§3.2), which is what keeps
@@ -66,9 +65,9 @@ export interface ContextPackSlots {
   profile: string | null;
   weekDigest: string | null;
   loops: LoopLine[];
-  /** P1 stub — always empty in P0. */
+  /** Matched standing rules (0–3). Filled by the rule matcher (spec 02 §5.1). */
   rules: RuleSlot[];
-  /** P2 stub — always null in P0. */
+  /** P2 stub — always null until prospection / awareness pass lands. */
   nudge: NudgeDirective | null;
 }
 
@@ -183,17 +182,28 @@ export interface AssembleContextPackParams {
   now?: Date;
   /** Near-window size for dated loops; defaults to 7 days (spec 02 §4). */
   horizonDays?: number;
+  /**
+   * Pre-matched standing rules from the rules doorway (spec 02 §5.1). When the
+   * agent runs matcher + pack SQL via Promise.all, it passes results here or
+   * re-budgets with `buildContextPackText` after both settle.
+   */
+  rules?: RuleSlot[];
 }
 
 /**
- * Assemble the P0 context pack for a user: read the two precomputed digests and
- * the near-dated open loops, then budget + render. Rules and nudge stay empty
- * stubs until P1/P2 wire in the matcher and awareness pass.
+ * Assemble the context pack for a user: read the two precomputed digests and
+ * the near-dated open loops, then budget + render. Pass `rules` when the matcher
+ * has already run (or re-budget in the agent after concurrent match).
  */
 export async function assembleContextPack(
   params: AssembleContextPackParams,
 ): Promise<ContextPack> {
-  const { userId, now = new Date(), horizonDays = DEFAULT_LOOP_HORIZON_DAYS } = params;
+  const {
+    userId,
+    now = new Date(),
+    horizonDays = DEFAULT_LOOP_HORIZON_DAYS,
+    rules: matchedRules = [],
+  } = params;
   const within = new Date(now.getTime() + horizonDays * DAY_MS);
 
   const [profile, weekDigest, dueLoops] = await Promise.all([
@@ -208,7 +218,7 @@ export async function assembleContextPack(
     title: l.title,
     dueAt: l.dueAt,
   }));
-  const rules: RuleSlot[] = []; // P1 stub
+  const rules: RuleSlot[] = matchedRules;
   const nudge: NudgeDirective | null = null; // P2 stub
 
   const slots: ContextPackSlots = { profile, weekDigest, loops, rules, nudge };

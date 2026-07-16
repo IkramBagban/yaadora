@@ -70,6 +70,14 @@ export {
   buildContextPackText,
   estimateTokens,
   CONTEXT_PACK_TOKEN_BUDGET,
+  matchStandingRules,
+  filterRuleCandidates,
+  shortRuleName,
+  buildTurnEmbedText,
+  RULE_SIMILARITY_THRESHOLD,
+  RULE_MATCH_CAP,
+  editRuleAsCorrection,
+  planRuleCorrection,
 } from "./retrieval";
 export type {
   AskHandle,
@@ -91,4 +99,8 @@ export type {
   LoopLine,
   RuleSlot,
   NudgeDirective,
+  MatchedRule,
+  RuleCandidate,
+  RuleEditInput,
+  RuleEditResult,
 } from "./retrieval";
