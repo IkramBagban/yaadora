@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { streamAsk } from '../api/sse';
+import { api } from '../api/client';
+import { streamConversationTurn } from '../api/sse';
 import type {
-  AskHistoryTurn,
   AskMode,
   AskStep,
   Citation,
@@ -29,9 +29,6 @@ export interface Exchange {
   reminderSuggestion: ReminderSuggestion | null;
 }
 
-/** How many prior transcript messages to replay to the stateless server. */
-const HISTORY_TURNS = 6;
-
 function makeExchange(question: string): Exchange {
   return {
     id: newClientId(),
@@ -50,14 +47,20 @@ function makeExchange(question: string): Exchange {
 }
 
 /**
- * The ephemeral Ask conversation. Holds an in-memory list of exchanges (the
- * session) and streams each send through /ask, replaying the trimmed transcript
- * so follow-ups resolve. Nothing is persisted — a fresh session each launch.
+ * Durable Ask session (spec 02 §2.1, P0 item 2).
+ *
+ * Holds an in-memory list of exchanges for the UI and sends each turn with a
+ * server-side `conversationId`. Transcript history is loaded on the server —
+ * the client no longer replays prior turns.
  */
 export function useAskSession() {
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const exchangesRef = useRef<Exchange[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  /** Server conversation id for this session; created lazily on first send. */
+  const conversationIdRef = useRef<string | null>(null);
+  /** Serializes creates so concurrent first-sends share one conversation. */
+  const ensureConvoRef = useRef<Promise<string> | null>(null);
 
   exchangesRef.current = exchanges;
 
@@ -76,27 +79,36 @@ export function useAskSession() {
     [],
   );
 
-  /** Build the transcript to replay: all prior completed exchanges, last N msgs. */
-  const buildHistory = useCallback((upTo: Exchange[]): AskHistoryTurn[] => {
-    const turns: AskHistoryTurn[] = [];
-    for (const e of upTo) {
-      if (e.status !== 'done' || !e.text.trim()) continue;
-      turns.push({ role: 'user', content: e.question });
-      turns.push({ role: 'assistant', content: e.text });
+  const ensureConversation = useCallback(async (): Promise<string> => {
+    if (conversationIdRef.current) return conversationIdRef.current;
+    if (ensureConvoRef.current) return ensureConvoRef.current;
+
+    ensureConvoRef.current = (async () => {
+      const created = await api.createConversation();
+      conversationIdRef.current = created.id;
+      return created.id;
+    })();
+
+    try {
+      return await ensureConvoRef.current;
+    } finally {
+      ensureConvoRef.current = null;
     }
-    return turns.slice(-HISTORY_TURNS);
   }, []);
 
   const run = useCallback(
-    async (exchangeId: string, question: string, history: AskHistoryTurn[]) => {
+    async (exchangeId: string, question: string) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
       try {
-        await streamAsk(
+        const conversationId = await ensureConversation();
+        if (controller.signal.aborted) return;
+
+        await streamConversationTurn(
+          conversationId,
           question,
-          history,
           (event) => {
             if (controller.signal.aborted) return;
             if (event.type === 'step') {
@@ -137,7 +149,6 @@ export function useAskSession() {
                 status: 'error',
                 error: event.message,
                 liveStep: null,
-                // keep whatever text streamed so far
                 text: e.text,
               }));
             }
@@ -157,29 +168,27 @@ export function useAskSession() {
         }));
       }
     },
-    [patch],
+    [ensureConversation, patch],
   );
 
   const send = useCallback(
     (raw: string) => {
       const question = raw.trim();
       if (!question) return;
-      const history = buildHistory(exchangesRef.current);
       const exchange = makeExchange(question);
       setExchanges((list) => [...list, exchange]);
-      void run(exchange.id, question, history);
+      void run(exchange.id, question);
     },
-    [buildHistory, run],
+    [run],
   );
 
-  /** Re-run a failed / interrupted exchange, rebuilding history up to it. */
+  /** Re-run a failed / interrupted exchange against the same conversation. */
   const retry = useCallback(
     (id: string) => {
       const list = exchangesRef.current;
       const idx = list.findIndex((e) => e.id === id);
       if (idx === -1) return;
       const question = list[idx]!.question;
-      const history = buildHistory(list.slice(0, idx));
       patch(id, {
         text: '',
         steps: [],
@@ -192,9 +201,9 @@ export function useAskSession() {
         error: null,
         reminderSuggestion: null,
       });
-      void run(id, question, history);
+      void run(id, question);
     },
-    [buildHistory, patch, run],
+    [patch, run],
   );
 
   /** Stop the live stream; keep whatever partial text arrived. */
@@ -210,14 +219,24 @@ export function useAskSession() {
     );
   }, []);
 
-  /** Clear the session back to idle. */
+  /** Clear the session back to idle and start a fresh conversation next send. */
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    conversationIdRef.current = null;
+    ensureConvoRef.current = null;
     setExchanges([]);
   }, []);
 
   const streaming = exchanges.some((e) => e.status === 'streaming');
 
-  return { exchanges, streaming, send, retry, cancel, reset };
+  return {
+    exchanges,
+    streaming,
+    send,
+    retry,
+    cancel,
+    reset,
+    conversationId: conversationIdRef.current,
+  };
 }

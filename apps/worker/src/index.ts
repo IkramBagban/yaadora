@@ -11,6 +11,10 @@ import {
   type ConsolidationJobData,
 } from "@repo/core";
 import { createLogger, initLogging } from "@repo/logger";
+import {
+  scheduleConversationMaintenance,
+  startConversationMaintenanceWorker,
+} from "./conversation-maintenance";
 
 // Declare this process's log target FIRST — every log line (including those
 // from @repo/core's ingestion/consolidation) is written to logs/worker.log in
@@ -122,13 +126,25 @@ scheduleNightlyConsolidation()
   .then(() => log.info("nightly consolidation scheduled"))
   .catch((err) => log.error("could not schedule consolidation", err));
 
+// --- Conversation maintenance (idle sweep + retention) — P0 item 2 ---------
+// Append-only: module owns its queue/worker; do not fold into shared registration.
+const conversationMaintenanceWorker = startConversationMaintenanceWorker();
+
+scheduleConversationMaintenance()
+  .then(() => log.info("conversation maintenance scheduled"))
+  .catch((err) => log.error("could not schedule conversation maintenance", err));
+
 // Graceful shutdown so in-flight jobs finish and connections close cleanly.
 async function shutdown(signal: string) {
   log.info("shutdown signal received — closing workers", { signal });
-  await Promise.all([worker.close(), consolidationWorker.close()]);
+  await Promise.all([
+    worker.close(),
+    consolidationWorker.close(),
+    conversationMaintenanceWorker.close(),
+  ]);
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-log.info("starting ingestion + consolidation workers");
+log.info("starting ingestion + consolidation + conversation-maintenance workers");

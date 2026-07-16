@@ -163,6 +163,22 @@ export interface MeProfile {
   createdAt: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  startedAt: string;
+  lastTurnAt: string;
+  status: string;
+  summary: string | null;
+  turnCount: number;
+}
+
+export interface PrivacySettings {
+  transcriptRetentionDays: number | null;
+  quietHoursStart: string;
+  quietHoursEnd: string;
+  maxDailySurfacings: number;
+}
+
 export const api = {
   getMe(): Promise<MeProfile> {
     return request<MeProfile>('/me');
@@ -172,6 +188,57 @@ export const api = {
     return request<MeProfile>('/me', {
       method: 'PATCH',
       body: JSON.stringify(input),
+    });
+  },
+
+  // --- durable conversations (spec 02 §8) ---------------------------------
+
+  createConversation(): Promise<ConversationSummary> {
+    return request<ConversationSummary>('/conversations', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  listConversations(params: { since?: string } = {}): Promise<{
+    conversations: ConversationSummary[];
+  }> {
+    const q = new URLSearchParams();
+    if (params.since) q.set('since', params.since);
+    const qs = q.toString();
+    return request(`/conversations${qs ? `?${qs}` : ''}`);
+  },
+
+  registerPushToken(input: {
+    deviceId: string;
+    expoToken: string;
+  }): Promise<{ id: string; deviceId: string; updatedAt: string }> {
+    return request('/push-tokens', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
+  getPrivacySettings(): Promise<PrivacySettings> {
+    return request<PrivacySettings>('/settings/privacy');
+  },
+
+  patchPrivacySettings(
+    patch: Partial<PrivacySettings>,
+  ): Promise<PrivacySettings> {
+    return request<PrivacySettings>('/settings/privacy', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  },
+
+  postSurfacingReaction(
+    id: string,
+    reaction: 'dismissed' | 'engaged',
+  ): Promise<{ id: string; reaction: string; reactionAt: string | null }> {
+    return request(`/surfacings/${encodeURIComponent(id)}/reaction`, {
+      method: 'POST',
+      body: JSON.stringify({ reaction }),
     });
   },
 

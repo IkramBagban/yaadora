@@ -36,9 +36,9 @@ const TAB_BAR_CLEARANCE = 88;
 const NEAR_BOTTOM = 96;
 
 /**
- * Ask — an ephemeral conversation with your memory. Multi-turn follow-ups, a
- * live thinking trace, and AI-asks-back clarification. Fresh each launch; the
- * memory store is the only lasting history.
+ * Ask — a conversation with your memory. Multi-turn follow-ups, a live thinking
+ * trace, and AI-asks-back clarification. Turns are durable server-side via
+ * conversationId; the UI session still starts fresh each launch.
  */
 export default function AskScreen() {
   const { colors, dark } = useTheme();

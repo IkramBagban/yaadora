@@ -15,6 +15,17 @@ import {
 import { health } from "./routes/health";
 import { ask } from "./routes/ask";
 import {
+  createConversation,
+  listConversations,
+  postConversationTurn,
+} from "./routes/conversations";
+import { postSurfacingReaction } from "./routes/surfacings";
+import { registerPushToken } from "./routes/push-tokens";
+import {
+  getPrivacySettings,
+  patchPrivacySettings,
+} from "./routes/settings";
+import {
   confirmReminder,
   confirmSuggestedReminder,
   completeReminder,
@@ -87,6 +98,24 @@ const server = Bun.serve({
     },
     "/ask": {
       POST: (req) => ask(req),
+    },
+    // Durable conversations (spec 02 §8, P0 item 2)
+    "/conversations": {
+      POST: (req) => createConversation(req),
+      GET: (req) => listConversations(req),
+    },
+    "/conversations/:id/turns": {
+      POST: (req) => postConversationTurn(req, req.params.id),
+    },
+    "/surfacings/:id/reaction": {
+      POST: (req) => postSurfacingReaction(req, req.params.id),
+    },
+    "/push-tokens": {
+      POST: (req) => registerPushToken(req),
+    },
+    "/settings/privacy": {
+      GET: (req) => getPrivacySettings(req),
+      PATCH: (req) => patchPrivacySettings(req),
     },
     "/reminders": {
       GET: (req) => listReminders(req),
