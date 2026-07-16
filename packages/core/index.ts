@@ -66,6 +66,10 @@ export {
   streamGroundedAnswer,
   retrieveMemories,
   REFUSAL_TEXT,
+  assembleContextPack,
+  buildContextPackText,
+  estimateTokens,
+  CONTEXT_PACK_TOKEN_BUDGET,
 } from "./retrieval";
 export type {
   AskHandle,
@@ -81,4 +85,10 @@ export type {
   AssembledContext,
   SearchHit,
   SearchOutcome,
+  ContextPack,
+  ContextPackSlots,
+  AssembleContextPackParams,
+  LoopLine,
+  RuleSlot,
+  NudgeDirective,
 } from "./retrieval";

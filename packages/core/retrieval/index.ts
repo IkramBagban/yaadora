@@ -28,3 +28,20 @@ export type {
   AskStep,
   AskHistoryTurn,
 } from "./agent";
+
+// The context pack (spec 02 §4) — always-present working memory, assembled fresh
+// per Ask turn from precomputed digests + near-dated loops.
+export {
+  assembleContextPack,
+  buildContextPackText,
+  estimateTokens,
+  CONTEXT_PACK_TOKEN_BUDGET,
+} from "./context-pack";
+export type {
+  ContextPack,
+  ContextPackSlots,
+  AssembleContextPackParams,
+  LoopLine,
+  RuleSlot,
+  NudgeDirective,
+} from "./context-pack";

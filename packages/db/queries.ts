@@ -956,3 +956,185 @@ export async function rescoreSalience(userId: string): Promise<void> {
     WHERE user_id = ${userId} AND valid_to IS NULL
   `);
 }
+
+// ---------------------------------------------------------------------------
+// entity_edges materialization (spec 02 §2.5) — derived-of-derived, rebuilt
+// nightly by consolidation. DROP TABLE + rerun must reproduce it, so this is a
+// full per-user rebuild (delete then re-derive), never an incremental patch.
+// ---------------------------------------------------------------------------
+
+/**
+ * Rebuild `entity_edges` for one user from current entity→entity facts, with
+ * strength/recency enriched by `memory_entities` co-mention statistics.
+ *
+ * - Edges come from facts that connect two DISTINCT entities (both subject_id and
+ *   object_id set, valid_to IS NULL); `rel_type` is the fact predicate. Pairs are
+ *   normalized `a_id < b_id`; predicate semantics carry direction.
+ * - `evidence` = the distinct source memories of the contributing facts
+ *   (multi-provenance, fixes the single-provenance TODO).
+ * - `strength` = co-mention frequency × recency(30-day exp decay); `freq` and the
+ *   last-mention time come from `memory_entities` joined to `memories`, falling
+ *   back to the facts' own timing when a pair was never co-mentioned in one memory.
+ *
+ * Returns the number of edges written. Delete-then-insert makes it idempotent and
+ * exactly reproducible — the test of the rebuild story (spec 02 §9).
+ */
+export async function materializeEntityEdges(userId: string): Promise<number> {
+  await db.execute(sql`DELETE FROM entity_edges WHERE user_id = ${userId}`);
+  const rows = await db.execute(sql`
+    WITH edge_facts AS (
+      SELECT
+        LEAST(subject_id, object_id)          AS a_id,
+        GREATEST(subject_id, object_id)       AS b_id,
+        predicate                             AS rel_type,
+        array_agg(DISTINCT source_memory)     AS evidence,
+        max(COALESCE(valid_from, created_at)) AS fact_last
+      FROM facts
+      WHERE user_id = ${userId}
+        AND valid_to IS NULL
+        AND subject_id IS NOT NULL
+        AND object_id IS NOT NULL
+        AND subject_id <> object_id
+        AND predicate IS NOT NULL
+      GROUP BY 1, 2, 3
+    ),
+    comention AS (
+      SELECT
+        LEAST(me1.entity_id, me2.entity_id)        AS a_id,
+        GREATEST(me1.entity_id, me2.entity_id)     AS b_id,
+        count(DISTINCT me1.memory_id)              AS freq,
+        max(COALESCE(m.occurred_at, m.created_at)) AS last_mentioned
+      FROM memory_entities me1
+      JOIN memory_entities me2
+        ON me1.memory_id = me2.memory_id
+       AND me1.entity_id < me2.entity_id
+      JOIN memories m  ON m.id  = me1.memory_id
+      JOIN entities ea ON ea.id = me1.entity_id AND ea.user_id = ${userId}
+      JOIN entities eb ON eb.id = me2.entity_id AND eb.user_id = ${userId}
+      GROUP BY 1, 2
+    )
+    INSERT INTO entity_edges
+      (user_id, a_id, b_id, rel_type, status, strength, last_mentioned, evidence, updated_at)
+    SELECT
+      ${userId}, ef.a_id, ef.b_id, ef.rel_type, 'active',
+      COALESCE(cm.freq, 1) * exp(
+        -extract(epoch FROM (now() - COALESCE(cm.last_mentioned, ef.fact_last, now())))
+        / (60 * 60 * 24 * 30)
+      ),
+      COALESCE(cm.last_mentioned, ef.fact_last),
+      ef.evidence,
+      now()
+    FROM edge_facts ef
+    LEFT JOIN comention cm ON cm.a_id = ef.a_id AND cm.b_id = ef.b_id
+    RETURNING id
+  `);
+  return asRows(rows).length;
+}
+
+// ---------------------------------------------------------------------------
+// Digests (spec 02 §3.2) — small, cache-like, rebuildable summaries the context
+// pack (§4) reads. Consolidation writes them; the pack reads them.
+// ---------------------------------------------------------------------------
+
+/**
+ * Current (valid_to IS NULL) facts ABOUT THE USER (subject "user" → subject_id
+ * NULL), excluding consolidation-mined reflections. Input to the profile digest.
+ */
+export async function getUserProfileFactTexts(
+  userId: string,
+  limit = 60,
+): Promise<string[]> {
+  const rows = await db.execute(sql`
+    SELECT fact_text
+    FROM facts
+    WHERE user_id = ${userId}
+      AND valid_to IS NULL
+      AND subject_id IS NULL
+      AND origin = 'extraction'
+      AND fact_type <> 'reflection'
+    ORDER BY salience DESC, confidence DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => String(r.fact_text));
+}
+
+/** Conversation summaries touched since `since` — input to the 7-day digest. */
+export async function getRecentConversationSummaries(
+  userId: string,
+  since: Date,
+  limit = 20,
+): Promise<string[]> {
+  const rows = await db.execute(sql`
+    SELECT summary
+    FROM conversations
+    WHERE user_id = ${userId}
+      AND summary IS NOT NULL
+      AND last_turn_at >= ${since}
+    ORDER BY last_turn_at DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => String(r.summary));
+}
+
+/** Upsert a digest keyed by (user, kind) — cheap, overwrite-on-rebuild. */
+export async function upsertDigest(
+  userId: string,
+  kind: string,
+  content: string,
+): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO digests (user_id, kind, content, updated_at)
+    VALUES (${userId}, ${kind}, ${content}, now())
+    ON CONFLICT (user_id, kind)
+    DO UPDATE SET content = EXCLUDED.content, updated_at = now()
+  `);
+}
+
+/** Read a digest's content (null if it has not been built yet). */
+export async function getDigest(
+  userId: string,
+  kind: string,
+): Promise<string | null> {
+  const rows = await db.execute(sql`
+    SELECT content FROM digests
+    WHERE user_id = ${userId} AND kind = ${kind}
+    LIMIT 1
+  `);
+  const row = asRows(rows)[0];
+  return row?.content != null ? String(row.content) : null;
+}
+
+export interface DueOpenLoop {
+  id: string;
+  kind: string;
+  title: string;
+  dueAt: Date | null;
+}
+
+/**
+ * Open loops with a `due_at` at or before `within` (the context pack's near
+ * window, spec 02 §4). Ordered soonest-first. Past-due-but-still-open loops are
+ * included — they're unfinished threads until resolved or expired.
+ */
+export async function getDueOpenLoops(
+  userId: string,
+  within: Date,
+  limit = 20,
+): Promise<DueOpenLoop[]> {
+  const rows = await db.execute(sql`
+    SELECT id, kind, title, due_at
+    FROM open_loops
+    WHERE user_id = ${userId}
+      AND status = 'open'
+      AND due_at IS NOT NULL
+      AND due_at <= ${within}
+    ORDER BY due_at ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    dueAt: r.due_at ? new Date(r.due_at as string) : null,
+  }));
+}

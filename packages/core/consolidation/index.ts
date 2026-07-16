@@ -14,6 +14,10 @@ import {
   mergeDuplicateFact,
   getRecentEpisodicMemories,
   rescoreSalience,
+  materializeEntityEdges,
+  getUserProfileFactTexts,
+  getRecentConversationSummaries,
+  upsertDigest,
   type NewFact,
 } from "@repo/db";
 import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/models";
@@ -26,6 +30,8 @@ import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/mod
  *   2. fact dedup / merge   (§5.2)
  *   3. pattern mining       (§5.3)  → insights stored as origin='consolidation' facts
  *   4. salience rescoring   (§5.4)  → retrieval tie-breaker prior, never deletes
+ *   5. entity_edges rebuild (§3.2)  → derived-of-derived, fully rebuildable
+ *   6. digests              (§3.2)  → profile + 7-day week digest, ingestion tier
  *
  * Everything here is orchestration + LLM; the raw SQL lives in @repo/db.
  */
@@ -44,6 +50,10 @@ export interface ConsolidationReport {
   profilesRebuilt: number;
   factsMerged: number;
   insightsWritten: number;
+  /** entity_edges rows re-derived this run (§3.2). */
+  edgesMaterialized: number;
+  /** digests written this run: 0–2 (profile, week) (§3.2). */
+  digestsBuilt: number;
 }
 
 export async function runConsolidation(
@@ -60,7 +70,18 @@ export async function runConsolidation(
     const factsMerged = await dedupFacts(userId);
     const insightsWritten = await minePatterns(userId);
     await rescoreSalience(userId);
-    reports.push({ userId, profilesRebuilt, factsMerged, insightsWritten });
+    // Edges derive from the (now deduped/rescored) facts; digests read facts +
+    // conversation summaries. Both run last so they see this run's updates.
+    const edgesMaterialized = await materializeEntityEdges(userId);
+    const digestsBuilt = await buildDigests(userId);
+    reports.push({
+      userId,
+      profilesRebuilt,
+      factsMerged,
+      insightsWritten,
+      edgesMaterialized,
+      digestsBuilt,
+    });
   }
   return reports;
 }
@@ -187,4 +208,64 @@ async function minePatterns(userId: string): Promise<number> {
   }));
   await db.insert(facts).values(rows);
   return rows.length;
+}
+
+// --- §3.2 digests (profile summary + 7-day week digest) --------------------
+
+const WEEK_MS = 7 * DAY_MS;
+const DigestSchema = z.object({ summary: z.string() });
+
+/**
+ * Build the two per-user digests the context pack reads (§4), on the ingestion
+ * tier (§7 model routing). Cache-like and rebuildable — nothing here is a source
+ * of truth. Skips a digest when there is nothing to summarize (no empty writes).
+ * Returns how many digests were written (0–2).
+ */
+async function buildDigests(userId: string): Promise<number> {
+  let built = 0;
+
+  // Profile summary — a stable paragraph about the user from current user-level
+  // facts (subject "user"), excluding mined reflections.
+  const profileFacts = await getUserProfileFactTexts(userId);
+  if (profileFacts.length > 0) {
+    const { object } = await generateObject({
+      model: ingestionModel,
+      schema: DigestSchema,
+      system:
+        "You maintain a personal memory system. Write a concise 3–5 sentence profile of the USER from these known current facts about them. Third person, factual, no speculation, invent nothing.",
+      prompt: profileFacts.map((f) => `- ${f}`).join("\n"),
+    });
+    const summary = object.summary.trim();
+    if (summary) {
+      await upsertDigest(userId, "profile", summary);
+      built++;
+    }
+  }
+
+  // 7-day week digest — recent adds + conversation summaries into one paragraph.
+  const since = new Date(Date.now() - WEEK_MS);
+  const recentMems = await getRecentEpisodicMemories(userId, since);
+  const convSummaries = await getRecentConversationSummaries(userId, since);
+  if (recentMems.length > 0 || convSummaries.length > 0) {
+    const memLines = recentMems.map(
+      (m) => `- ${m.rawText.replace(/\s+/g, " ").slice(0, 300)}`,
+    );
+    const convLines = convSummaries.map(
+      (s) => `- (conversation) ${s.replace(/\s+/g, " ").slice(0, 300)}`,
+    );
+    const { object } = await generateObject({
+      model: ingestionModel,
+      schema: DigestSchema,
+      system:
+        "You maintain a personal memory system. Summarize the user's PAST 7 DAYS into ONE compact paragraph (≤120 words): what they did, decided, felt, and what's still ongoing. Factual, no speculation, invent nothing. If there is little, keep it short.",
+      prompt: [...memLines, ...convLines].join("\n"),
+    });
+    const summary = object.summary.trim();
+    if (summary) {
+      await upsertDigest(userId, "week", summary);
+      built++;
+    }
+  }
+
+  return built;
 }
