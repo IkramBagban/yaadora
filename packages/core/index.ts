@@ -85,6 +85,13 @@ export {
   renderEntityContext,
   ENTITY_FACT_CAP,
   ENTITY_EDGE_CAP,
+  selectObservation,
+  pickBestObservation,
+  parsePatternReceipts,
+  PATTERN_MIN_RECEIPTS,
+  PATTERN_MIN_CONFIDENCE,
+  PATTERN_MAX_DISTANCE,
+  PATTERN_RECENT_DAYS,
 } from "./retrieval";
 export type {
   AskHandle,
@@ -117,6 +124,7 @@ export type {
   EntityContextLoop,
   EntityContextFact,
   EntityContextEdge,
+  ObservationSlot,
 } from "./retrieval";
 
 // Proactive brain (spec 02 §5.4, §3.3, §6) — gates + awareness + push helpers.

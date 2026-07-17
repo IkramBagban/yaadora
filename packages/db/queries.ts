@@ -1582,3 +1582,182 @@ export async function findCommitmentLoopCandidates(
     }))
     .filter((r) => Number.isFinite(r.distance) && r.distance <= maxDistance);
 }
+
+// ---------------------------------------------------------------------------
+// Pattern surfacing (spec 02 §3.2.3 / §5.4, P5). Consolidation writes pattern
+// insights as origin='consolidation' facts; the Ask agent surfaces AT MOST ONE
+// per turn through the context pack, decided by relevance + prompting rather
+// than a forced nudge (P5 design refinement). Suppression stays code+state: a
+// dismissed pattern, or one surfaced (non-suppressed) in the recent window, is
+// filtered out HERE so it can never re-enter context.
+// ---------------------------------------------------------------------------
+
+export interface SurfaceablePatternRow {
+  id: string;
+  factText: string;
+  /** raw object_text — carries "supported_by: id1, id2, ..." (parsed in core). */
+  objectText: string | null;
+  confidence: number;
+  /** cosine distance to the current turn (lower = more relevant). */
+  distance: number;
+}
+
+/**
+ * Candidate pattern insights for the current turn: current (valid_to IS NULL)
+ * consolidation reflections at or above `minConfidence`, ranked by relevance to
+ * the turn embedding, EXCLUDING any pattern the user dismissed (ever) or that
+ * was already surfaced without suppression within `recentDays`. The ≥5-receipt
+ * check is applied in core after parsing `object_text`. Returns a small ranked
+ * pool; the caller takes the top relevant one.
+ */
+export async function getSurfaceablePatternInsights(params: {
+  userId: string;
+  turnEmbedding: number[];
+  minConfidence: number;
+  recentDays: number;
+  limit?: number;
+}): Promise<SurfaceablePatternRow[]> {
+  const { userId, turnEmbedding, minConfidence, recentDays, limit = 5 } = params;
+  const vec = toVectorLiteral(turnEmbedding);
+  const rows = await db.execute(sql`
+    SELECT f.id, f.fact_text, f.object_text, f.confidence,
+           (f.embedding <=> ${vec}::vector) AS distance
+    FROM facts f
+    WHERE f.user_id = ${userId}
+      AND f.origin = 'consolidation'
+      AND f.fact_type = 'reflection'
+      AND f.valid_to IS NULL
+      AND f.embedding IS NOT NULL
+      AND f.confidence >= ${minConfidence}
+      AND NOT EXISTS (
+        SELECT 1 FROM surfacings s
+        WHERE s.user_id = ${userId}
+          AND s.subject_type = 'pattern_fact'
+          AND s.subject_id = f.id
+          AND s.suppressed_reason IS NULL
+          AND (
+            s.reaction = 'dismissed'
+            OR s.shown_at > NOW() - (${recentDays}::int * INTERVAL '1 day')
+          )
+      )
+    ORDER BY distance ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows)
+    .map((r) => ({
+      id: String(r.id),
+      factText: String(r.fact_text),
+      objectText: r.object_text == null ? null : String(r.object_text),
+      confidence: Number(r.confidence),
+      distance: Number(r.distance),
+    }))
+    .filter((r) => Number.isFinite(r.distance));
+}
+
+export interface GraphSnapshotEntity {
+  id: string;
+  type: string;
+  canonicalName: string;
+  mentionCount: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+}
+export interface GraphSnapshotEdge {
+  aName: string;
+  bName: string;
+  relType: string;
+  status: string;
+}
+export interface GraphSnapshotLoop {
+  kind: string;
+  title: string;
+  status: string;
+  dueAt: string | null;
+}
+export interface GraphSnapshotMemory {
+  id: string;
+  occurredAt: string | null;
+  text: string;
+}
+export interface GraphSnapshot {
+  entities: GraphSnapshotEntity[];
+  edges: GraphSnapshotEdge[];
+  loops: GraphSnapshotLoop[];
+  memories: GraphSnapshotMemory[];
+}
+
+/**
+ * A whole-graph snapshot for the nightly pattern pass (spec 02 §3.2.3): the
+ * user's entities, materialized edges, open loops, and dated memories over a
+ * window. Personal-scale data fits one reasoning-model context, so the model —
+ * not a graph algorithm (spec 01 D1) — does the connecting. `memoryWindowDays`
+ * bounds how far back dated memories reach so "projects went quiet at week
+ * three" style patterns have their timeline; entities/edges/loops are the full
+ * current graph.
+ */
+export async function getGraphSnapshot(params: {
+  userId: string;
+  memoryWindowDays: number;
+  maxMemories?: number;
+}): Promise<GraphSnapshot> {
+  const { userId, memoryWindowDays, maxMemories = 300 } = params;
+
+  const [entRows, edgeRows, loopRows, memRows] = await Promise.all([
+    db.execute(sql`
+      SELECT id, type, canonical_name, mention_count, first_seen, last_seen
+      FROM entities WHERE user_id = ${userId}
+      ORDER BY mention_count DESC LIMIT 400
+    `),
+    db.execute(sql`
+      SELECT ea.canonical_name AS a_name, eb.canonical_name AS b_name,
+             e.rel_type, e.status
+      FROM entity_edges e
+      JOIN entities ea ON ea.id = e.a_id
+      JOIN entities eb ON eb.id = e.b_id
+      WHERE e.user_id = ${userId}
+      ORDER BY e.strength DESC LIMIT 300
+    `),
+    db.execute(sql`
+      SELECT kind, title, status, due_at
+      FROM open_loops WHERE user_id = ${userId} AND status = 'open'
+      ORDER BY created_at DESC LIMIT 200
+    `),
+    db.execute(sql`
+      SELECT id, occurred_at, raw_text
+      FROM memories
+      WHERE user_id = ${userId}
+        AND status = 'processed'
+        AND COALESCE(occurred_at, created_at) > NOW() - (${memoryWindowDays}::int * INTERVAL '1 day')
+      ORDER BY COALESCE(occurred_at, created_at) DESC
+      LIMIT ${maxMemories}
+    `),
+  ]);
+
+  return {
+    entities: asRows(entRows).map((r) => ({
+      id: String(r.id),
+      type: String(r.type),
+      canonicalName: String(r.canonical_name),
+      mentionCount: Number(r.mention_count),
+      firstSeen: r.first_seen ? new Date(r.first_seen as string).toISOString() : null,
+      lastSeen: r.last_seen ? new Date(r.last_seen as string).toISOString() : null,
+    })),
+    edges: asRows(edgeRows).map((r) => ({
+      aName: String(r.a_name),
+      bName: String(r.b_name),
+      relType: String(r.rel_type),
+      status: String(r.status),
+    })),
+    loops: asRows(loopRows).map((r) => ({
+      kind: String(r.kind),
+      title: String(r.title),
+      status: String(r.status),
+      dueAt: r.due_at ? new Date(r.due_at as string).toISOString() : null,
+    })),
+    memories: asRows(memRows).map((r) => ({
+      id: String(r.id),
+      occurredAt: r.occurred_at ? new Date(r.occurred_at as string).toISOString() : null,
+      text: String(r.raw_text).replace(/\s+/g, " ").slice(0, 300),
+    })),
+  };
+}

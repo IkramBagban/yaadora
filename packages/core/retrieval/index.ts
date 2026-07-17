@@ -45,7 +45,21 @@ export type {
   RuleSlot,
   NudgeDirective,
   EntityContextSlot,
+  ObservationSlot,
 } from "./context-pack";
+
+// Pattern surfacing (spec 03 P5) — at most one relevant, high-support,
+// non-dismissed pattern offered as context; the agent decides whether to raise
+// it. Suppression stays code+state inside `selectObservation`.
+export {
+  selectObservation,
+  pickBestObservation,
+  parsePatternReceipts,
+  PATTERN_MIN_RECEIPTS,
+  PATTERN_MIN_CONFIDENCE,
+  PATTERN_MAX_DISTANCE,
+  PATTERN_RECENT_DAYS,
+} from "./observations";
 
 // Graph doorway (spec 02 §5.2) — turn-time entity linker + context assembler.
 export { linkTurnEntities, TURN_ENTITY_CAP } from "./entity-linker";

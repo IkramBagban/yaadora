@@ -21,7 +21,9 @@ import {
   type RuleSlot,
   type LoopLine,
   type EntityContextSlot,
+  type ObservationSlot,
 } from "./context-pack";
+import { selectObservation } from "./observations";
 import {
   matchStandingRules,
   shortRuleName,
@@ -66,7 +68,7 @@ export interface AskHistoryTurn {
 
 /** A single visible step in the agent's trace (emitted live + summarised). */
 export interface AskStep {
-  kind: "search" | "clarify" | "synthesize" | "reminder" | "rule" | "entity";
+  kind: "search" | "clarify" | "synthesize" | "reminder" | "rule" | "entity" | "observation";
   label: string;
   query?: string;
   count?: number;
@@ -275,6 +277,11 @@ export async function answerQuestion(params: {
   let linkedEntities: LinkedEntity[] = [];
   /** Their assembled context (pre-fetched into the pack, spec 02 §5.2). */
   let prefetchedContexts: EntityContext[] = [];
+  /** At most one pattern the agent MAY surface this turn (spec 03 P5). */
+  let observationSlot: ObservationSlot | null = null;
+  /** Ledger row written iff the agent actually surfaces the observation. */
+  let observationSurfacing: { surfacingId: string; evidence: string[] } | null =
+    null;
 
   try {
     const recentTurns = history.slice(-6).map((h) => ({
@@ -285,20 +292,25 @@ export async function answerQuestion(params: {
     // Phase A: matcher + pack SQL + turn-time entity linker + prior-nudge ids,
     // all concurrent (spec 02 §5.1/§5.2/§5.4). The linker runs alongside pack
     // assembly; entity-context assembly and awareness depend on its result.
-    const [matched, pack, linked, priorSurfacingIds] = await Promise.all([
-      matchStandingRules({ userId, userTurn: question, previousUserTurn }),
-      assembleContextPack({ userId, now }).catch((err) => {
-        log.warn("context pack assembly failed; continuing without it", err as Error);
-        return null;
-      }),
-      linkTurnEntities({ userId, userTurn: question }).catch((err) => {
-        log.warn("turn entity linker failed; continuing without it", err as Error);
-        return [] as LinkedEntity[];
-      }),
-      loadPriorSurfacingIds({ userId, conversationId }).catch(() => [] as string[]),
-    ]);
+    const [matched, pack, linked, priorSurfacingIds, observation] =
+      await Promise.all([
+        matchStandingRules({ userId, userTurn: question, previousUserTurn }),
+        assembleContextPack({ userId, now }).catch((err) => {
+          log.warn("context pack assembly failed; continuing without it", err as Error);
+          return null;
+        }),
+        linkTurnEntities({ userId, userTurn: question }).catch((err) => {
+          log.warn("turn entity linker failed; continuing without it", err as Error);
+          return [] as LinkedEntity[];
+        }),
+        loadPriorSurfacingIds({ userId, conversationId }).catch(() => [] as string[]),
+        // P5: at most one relevant, high-support, non-dismissed pattern —
+        // offered as context, surfaced only if the agent judges it fits.
+        selectObservation({ userId, userTurn: question, now }),
+      ]);
     matchedRules = matched;
     linkedEntities = linked;
+    observationSlot = observation;
     const linkedEntityIds = linked.map((l) => l.entityId);
 
     // Phase B: pre-fetch entity context (both doorway modes share the assembler)
@@ -430,6 +442,7 @@ export async function answerQuestion(params: {
       ruleSlots.length > 0 ||
       Boolean(nudgeDirective) ||
       Boolean(entityContextSlot) ||
+      Boolean(observationSlot) ||
       mergedLoops.length > 0;
     if (hasPackContent) {
       const { text } = buildContextPackText({
@@ -439,6 +452,7 @@ export async function answerQuestion(params: {
         rules: ruleSlots,
         nudge: nudgeDirective,
         entityContext: entityContextSlot,
+        observation: observationSlot,
       });
       contextPackText = text;
     }
@@ -717,6 +731,55 @@ export async function answerQuestion(params: {
       }),
       // No execute: a terminal client tool. `hasToolCall('clarify')` stops the loop.
     }),
+    note_observation: tool({
+      description:
+        "Record that you are surfacing the pattern observation offered in the context pack. Call this ONLY when you actually raise that observation in your reply, and pass its exact id. It writes the observation to the memory ledger so it is shown with its receipts and never repeated. Do NOT call it for anything other than the offered observation, and never invent an id.",
+      inputSchema: z.object({
+        id: z
+          .string()
+          .describe("the exact id of the offered observation you are surfacing"),
+      }),
+      execute: async ({ id }) => {
+        // Guard: only the observation actually offered this turn can be recorded
+        // (a hallucinated id must never write a ledger row).
+        if (!observationSlot || id !== observationSlot.id) {
+          return { ok: false, error: "No such observation was offered this turn." };
+        }
+        if (observationSurfacing) {
+          return { ok: true, note: "Already recorded." };
+        }
+        try {
+          const [created] = await db
+            .insert(surfacings)
+            .values({
+              userId,
+              kind: "pattern_nudge",
+              subjectType: "pattern_fact",
+              subjectId: observationSlot.id,
+              channel: "conversation",
+              conversationId,
+              evidence: observationSlot.receipts,
+            })
+            .returning({ id: surfacings.id });
+          if (!created) return { ok: false, error: "Could not record." };
+          observationSurfacing = {
+            surfacingId: created.id,
+            evidence: observationSlot.receipts,
+          };
+          await addReceiptCitations(observationSlot.receipts);
+          const step: AskStep = {
+            kind: "observation",
+            label: "Noting a pattern",
+          };
+          steps.push(step);
+          onStep?.(step);
+          return { ok: true };
+        } catch (err) {
+          log.warn("note_observation record failed", err as Error);
+          return { ok: false, error: "Could not record." };
+        }
+      },
+    }),
     json: tool({
       description:
         "Fallback tool to catch model hallucinations. Do not use this tool.",
@@ -757,6 +820,7 @@ export async function answerQuestion(params: {
       const surfacingIds = [
         ...applied.surfacingIds,
         ...(nudgeSurfacingId ? [nudgeSurfacingId] : []),
+        ...(observationSurfacing ? [observationSurfacing.surfacingId] : []),
       ];
       resolveResult({
         citations: clarified ? [] : Array.from(citeMap.values()),
@@ -766,7 +830,9 @@ export async function answerQuestion(params: {
         clarifyOptions,
         ruleIdsApplied: applied.ruleIdsApplied,
         surfacingIds,
-        nudge: wovenNudge,
+        // The receipt affordance shows one surfacing; a gate-approved nudge takes
+        // precedence, otherwise a surfaced pattern (P5) rides the same channel.
+        nudge: wovenNudge ?? observationSurfacing,
       });
     };
 

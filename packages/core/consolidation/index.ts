@@ -13,6 +13,7 @@ import {
   findDuplicateFactPairs,
   mergeDuplicateFact,
   getRecentEpisodicMemories,
+  getGraphSnapshot,
   rescoreSalience,
   materializeEntityEdges,
   getUserProfileFactTexts,
@@ -140,37 +141,113 @@ const PatternSchema = z.object({
     z.object({
       insightText: z.string(),
       supportingMemoryIds: z.array(z.string()),
+      /** the model's own confidence 0–1 that this is a real, defensible pattern. */
+      confidence: z.number().min(0).max(1),
     }),
   ),
 });
 
-/** Look back this far for recurring patterns. */
-const PATTERN_WINDOW_MS = 30 * DAY_MS;
-/** Need at least this many episodic memories before mining is meaningful. */
+/**
+ * How far back dated memories reach for the timeline the pattern pass reasons
+ * over. Patterns like "projects go quiet around week three" need month+-scale
+ * history; the current graph (entities/edges/loops) is always included in full.
+ */
+const PATTERN_MEMORY_WINDOW_DAYS = 365;
+/** Need at least this much episodic signal before mining is meaningful. */
 const MIN_MEMORIES_FOR_PATTERNS = 5;
+/**
+ * Store an insight only with at least this many receipts. The stricter
+ * surfacing bar (≥5 receipts AND confidence ≥0.8, spec 02 §5.4) is enforced at
+ * read time in `selectObservation`; keeping a slightly wider candidate pool
+ * here means a pattern that gains a 5th receipt later can surface without a
+ * re-mine. "Inference too thin" (2 points) never enters the store.
+ */
+const MIN_RECEIPTS_TO_STORE = 3;
 
+function serializeGraphForPatterns(snap: {
+  entities: { canonicalName: string; type: string; mentionCount: number; firstSeen: string | null; lastSeen: string | null }[];
+  edges: { aName: string; bName: string; relType: string; status: string }[];
+  loops: { kind: string; title: string; dueAt: string | null }[];
+  memories: { id: string; occurredAt: string | null; text: string }[];
+}): string {
+  const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "?");
+  const sections: string[] = [];
+  if (snap.entities.length) {
+    sections.push(
+      "PEOPLE / PROJECTS / TOPICS (name · type · mentions · first→last seen):\n" +
+        snap.entities
+          .map(
+            (e) =>
+              `- ${e.canonicalName} · ${e.type} · ${e.mentionCount}× · ${day(e.firstSeen)}→${day(e.lastSeen)}`,
+          )
+          .join("\n"),
+    );
+  }
+  if (snap.edges.length) {
+    sections.push(
+      "RELATIONSHIPS:\n" +
+        snap.edges
+          .map((e) => `- ${e.aName} —[${e.relType}, ${e.status}]— ${e.bName}`)
+          .join("\n"),
+    );
+  }
+  if (snap.loops.length) {
+    sections.push(
+      "OPEN THREADS:\n" +
+        snap.loops
+          .map((l) => `- (${l.kind}) ${l.title}${l.dueAt ? ` [due ${day(l.dueAt)}]` : ""}`)
+          .join("\n"),
+    );
+  }
+  sections.push(
+    "TIMELINE (memory id · date · text) — cite these ids as supporting evidence:\n" +
+      snap.memories
+        .map((m) => `[${m.id}] ${day(m.occurredAt)} — ${m.text}`)
+        .join("\n"),
+  );
+  return sections.join("\n\n");
+}
+
+/**
+ * The whole-graph pattern pass (spec 02 §3.2.3). Serializes the user's entire
+ * graph — entities, edges, open loops, and a dated memory timeline — and hands
+ * it to the reasoning tier with one question: what recurs or connects here that
+ * the user may not have connected? Personal-scale data fits one context window,
+ * so the LLM IS the graph algorithm (spec 01 D1); no traversal library.
+ *
+ * Insights are CANDIDATES ONLY — stored as origin='consolidation' reflections
+ * with multi-provenance and an evidence-tied confidence. They surface later,
+ * one at a time and only when relevant, through the P5 context path
+ * (`selectObservation`); nothing here is ever auto-shown.
+ */
 async function minePatterns(userId: string): Promise<number> {
-  const since = new Date(Date.now() - PATTERN_WINDOW_MS);
-  const mems = await getRecentEpisodicMemories(userId, since);
-  if (mems.length < MIN_MEMORIES_FOR_PATTERNS) return 0;
+  const snapshot = await getGraphSnapshot({
+    userId,
+    memoryWindowDays: PATTERN_MEMORY_WINDOW_DAYS,
+  });
+  if (snapshot.memories.length < MIN_MEMORIES_FOR_PATTERNS) return 0;
 
   const { object } = await generateObject({
     model: reasoningModel,
     schema: PatternSchema,
     system:
-      "You are the consolidation stage of a personal memory system. Find RECURRING patterns/correlations across the user's recent memories (e.g. 'low energy is mentioned on most late-night-work days'). Only report a pattern supported by MULTIPLE memories; cite their ids. If there are no real patterns, return an empty list.",
-    prompt: mems
-      .map((m) => `[${m.id}] ${m.rawText.replace(/\s+/g, " ").slice(0, 400)}`)
-      .join("\n"),
+      "You are the consolidation ('sleep') stage of a personal memory system. You are given a user's whole knowledge graph — their people/projects, relationships, open threads, and a dated timeline of memories. Find RECURRING patterns or non-obvious connections the user may not have connected themselves (e.g. 'the last five projects all went quiet around week three', 'low energy is mentioned on most late-night-work days'). Rules: (1) every insight MUST be supported by MULTIPLE specific memories — cite their exact ids from the timeline; the more independent supporting memories, the better. (2) State each insight as a neutral observation about the user, never a judgment or diagnosis. (3) Only report patterns you could defend with the receipts; set confidence honestly. (4) If there are no real, well-supported patterns, return an empty list — silence is correct and expected.",
+    prompt: serializeGraphForPatterns(snapshot),
   });
 
-  const validIds = new Set(mems.map((m) => m.id));
+  const validIds = new Set(snapshot.memories.map((m) => m.id));
   const insights = object.insights
     .map((i) => ({
       insightText: i.insightText.trim(),
-      supporting: i.supportingMemoryIds.filter((id) => validIds.has(id)),
+      supporting: Array.from(
+        new Set(i.supportingMemoryIds.filter((id) => validIds.has(id))),
+      ),
+      modelConfidence: i.confidence,
     }))
-    .filter((i) => i.insightText.length > 0 && i.supporting.length >= 2);
+    .filter(
+      (i) =>
+        i.insightText.length > 0 && i.supporting.length >= MIN_RECEIPTS_TO_STORE,
+    );
 
   // Refresh the insight set: retire prior consolidation insights (kept in
   // history, never deleted), then write the current batch.
@@ -194,16 +271,20 @@ async function minePatterns(userId: string): Promise<number> {
     userId,
     subjectId: null, // patterns are about the user
     predicate: "pattern",
-    objectText: `supported_by: ${i.supporting.join(", ")}`, // TODO: multi-provenance table
+    objectText: `supported_by: ${i.supporting.join(", ")}`, // multi-provenance until a join table exists
     objectId: null,
     factText: i.insightText,
     embedding: embeddings[idx] ?? null,
     validFrom: now,
     factType: "reflection",
     origin: "consolidation",
-    confidence: Math.min(1, 0.5 + 0.1 * i.supporting.length),
-    // Provenance is single-valued in the schema; use a representative memory.
-    // Full contributing set is noted in objectText until a join table exists.
+    // Confidence is the MINIMUM of the model's own confidence and an
+    // evidence-tied cap (0.5 + 0.1·receipts): a claim can't outrun its
+    // receipts. With the ≥0.8 surfacing bar this means ≥3 receipts before a
+    // pattern can even qualify, and the independent ≥5-receipt check in
+    // selectObservation is the real gate (spec 02 §5.4).
+    confidence: Math.min(1, i.modelConfidence, 0.5 + 0.1 * i.supporting.length),
+    // Representative provenance; full contributing set is in objectText.
     sourceMemory: i.supporting[0]!,
   }));
   await db.insert(facts).values(rows);

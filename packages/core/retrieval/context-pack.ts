@@ -10,9 +10,10 @@ import { getDigest, getDueOpenLoops } from "@repo/db";
  * awareness pass + gates) + entity context (P3, graph doorway pre-fetch).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
- *   rules > nudge > dated loops > entity context > digest > profile
- * (spec 02 §4, extended in P3 — entity context sits after dated loops and before
- * the digest). "Priority" means the highest-priority slots are kept first; when
+ *   rules > nudge > dated loops > entity context > observation > digest > profile
+ * (spec 02 §4, extended in P3 — entity context sits after dated loops; P5 adds
+ * the pattern observation just below it, the first slot dropped under pressure).
+ * "Priority" means the highest-priority slots are kept first; when
  * the budget runs out the lowest-priority slot is truncated, then dropped, then
  * the next one up, and so on.
  *
@@ -68,6 +69,22 @@ export interface LoopLine {
 }
 
 /**
+ * A pattern observation the agent MAY surface (spec 03 P5). Unlike a nudge, this
+ * is not a forced directive — it rides in as low-priority context and the agent
+ * decides, from relevance and the guidance in `renderObservation`, whether to
+ * raise it at all. Already-dismissed / recently-surfaced patterns are filtered
+ * out before they ever reach this slot (suppression stays code+state, enforced
+ * in the query — spec 01 D5). `receipts` are the memory ids shown as sources; if
+ * the agent surfaces it, it must call `note_observation(id)` so the ledger
+ * records it (the only reliable signal a naturally-woven pattern was shown).
+ */
+export interface ObservationSlot {
+  id: string;
+  text: string;
+  receipts: string[];
+}
+
+/**
  * Pre-fetched entity context for entities confidently linked this turn (spec 02
  * §5.2, P3 graph doorway). `text` is the already-rendered, delimited block
  * (`renderEntityContext`); `entityIds` / `receipts` ride along for the trace and
@@ -93,6 +110,13 @@ export interface ContextPackSlots {
    * Sits below loops in display order and after them in budget priority.
    */
   entityContext?: EntityContextSlot | null;
+  /**
+   * At most one relevant, high-support pattern the agent MAY surface (spec 03
+   * P5). Lowest proactive priority — the first slot dropped under budget
+   * pressure, because a pattern is never worth crowding out a rule, a due loop,
+   * or entity context. Null when nothing qualifies (the common case).
+   */
+  observation?: ObservationSlot | null;
 }
 
 export interface ContextPack extends ContextPackSlots {
@@ -148,6 +172,18 @@ function renderEntityContextSlot(slot: EntityContextSlot): string {
     slot.text,
   ].join("\n");
 }
+function renderObservation(o: ObservationSlot): string {
+  const refs = o.receipts.length ? ` Receipts: ${o.receipts.join(", ")}.` : "";
+  // Framing IS the guardrail (spec 03 P5, spec 01 anti-scenarios). A pattern is
+  // a claim ABOUT the user; wrong-and-confident destroys trust in one shot. So
+  // the agent surfaces it ONLY when it clearly fits, as an observation + a
+  // question, with receipts, and never as a verdict — otherwise stays silent.
+  return [
+    "One pattern from the user's own history you MAY raise — but only if it genuinely fits what they're discussing right now:",
+    `  ${o.text} (id: ${o.id}).${refs}`,
+    "If (and only if) it fits: state it plainly as something you noticed, show the receipts, and end with a question that hands control back to them (\"want to do anything about that?\") — never a verdict, diagnosis, or lecture. If it does not clearly fit this moment, say NOTHING about it. If you do raise it, you MUST also call note_observation with its id so it is recorded and never repeated.",
+  ].join("\n");
+}
 
 /** Hard-truncate a block to at most `maxTokens`, keeping whole lines where it can. */
 function truncateBlock(block: string, maxTokens: number): string | null {
@@ -180,6 +216,8 @@ export function buildContextPackText(
       key: "entityContext",
       block: renderEntityContextSlot(slots.entityContext),
     });
+  if (slots.observation)
+    byPriority.push({ key: "observation", block: renderObservation(slots.observation) });
   if (slots.weekDigest) byPriority.push({ key: "weekDigest", block: renderDigest(slots.weekDigest) });
   if (slots.profile) byPriority.push({ key: "profile", block: renderProfile(slots.profile) });
 
@@ -209,6 +247,7 @@ export function buildContextPackText(
     "rules",
     "loops",
     "entityContext",
+    "observation",
     "nudge",
   ];
   const parts = [PACK_HEADER];
