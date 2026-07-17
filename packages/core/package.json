@@ -9,7 +9,7 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit",
-    "test": "bun test ingestion/pipeline.test.ts && bun test retrieval/context-pack.test.ts && bun test retrieval/rule-matcher.test.ts && bun test retrieval/rule-edit.test.ts && bun test retrieval/entity-linker.test.ts && bun test retrieval/entity-context.test.ts && bun test proactive/gates.test.ts && bun test eval/prospection.eval.test.ts && bun test eval/seam-fixtures.eval.test.ts && bun test eval/rebuild-story.test.ts && bun test eval/rule-matcher.eval.test.ts && bun test eval/entity-context.eval.test.ts"
+    "test": "bun test ingestion/pipeline.test.ts && bun test retrieval/context-pack.test.ts && bun test retrieval/rule-matcher.test.ts && bun test retrieval/rule-edit.test.ts && bun test retrieval/entity-linker.test.ts && bun test retrieval/entity-context.test.ts && bun test proactive/gates.test.ts && bun test proactive/intention.test.ts && bun test eval/prospection.eval.test.ts && bun test eval/seam-fixtures.eval.test.ts && bun test eval/rebuild-story.test.ts && bun test eval/rule-matcher.eval.test.ts && bun test eval/entity-context.eval.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.7",

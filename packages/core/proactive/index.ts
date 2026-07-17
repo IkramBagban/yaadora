@@ -5,6 +5,7 @@
 
 export {
   runGates,
+  gateInsights,
   gateLedger,
   gateAlreadyKnown,
   gateSeam,
@@ -19,7 +20,10 @@ export {
   hardBlockMidTask,
   buildAlreadyKnownPatterns,
   P2_ENABLED_KINDS,
+  INFERENCE_KINDS,
+  ENABLED_KINDS,
   LOOKUP_KINDS,
+  MIN_ONE_RECEIPT_KINDS,
   IGNORED_COOLDOWN_DAYS,
 } from "./gates";
 export type {
@@ -59,5 +63,12 @@ export {
   loadSubjectsSurfacedThisWeek,
   scanProspectionCandidates,
 } from "./candidates";
+
+export {
+  detectCommitmentContradictions,
+  COMMITMENT_PROXIMITY_MAX_DISTANCE,
+  MAX_COMMITMENTS_TO_CONFIRM,
+} from "./intention";
+export type { DetectCommitmentContradictionsParams } from "./intention";
 
 export { generatePushCopy, sendExpoPush } from "./push";

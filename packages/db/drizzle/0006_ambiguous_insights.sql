@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "insights_enabled" boolean DEFAULT true NOT NULL;

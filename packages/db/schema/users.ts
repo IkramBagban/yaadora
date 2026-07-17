@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, time } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, time, boolean } from "drizzle-orm/pg-core";
 
 /**
  * users — every row in the system is scoped by `user_id`.
@@ -12,6 +12,13 @@ import { pgTable, uuid, text, timestamp, integer, time } from "drizzle-orm/pg-co
  * `transcriptRetentionDays` (null = keep forever, 0 = digest immediately),
  * `quietHoursStart`/`quietHoursEnd` (local, block push only), and
  * `maxDailySurfacings` (proactive budget across all channels).
+ *
+ * `insightsEnabled` (spec 03 P4 / open question 3, decided: yes) is the
+ * "Insights" on/off toggle. When false, INFERENCE-grade proactive kinds
+ * (intention_nudge now; pattern/absence later) are suppressed at the gate with
+ * `suppressed_reason = 'insights_disabled'`. Lookup-grade kinds (rule/date/loop/
+ * edge) are UNAFFECTED — this toggle governs only claims the system makes ABOUT
+ * the user, never things the user explicitly said.
  */
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -22,6 +29,8 @@ export const users = pgTable("users", {
   quietHoursStart: time("quiet_hours_start").notNull().default("22:00:00"), // local
   quietHoursEnd: time("quiet_hours_end").notNull().default("08:00:00"), // local
   maxDailySurfacings: integer("max_daily_surfacings").notNull().default(3),
+  // "Insights" toggle — gates INFERENCE-grade proactive kinds only (spec 03 P4).
+  insightsEnabled: boolean("insights_enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

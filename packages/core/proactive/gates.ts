@@ -21,12 +21,43 @@ export const P2_ENABLED_KINDS = new Set([
   "edge_nudge",
 ]);
 
+/**
+ * INFERENCE-grade kinds: nudges that make a claim ABOUT the user rather than
+ * repeating something they explicitly said (spec 01 D7). P4 adds
+ * `intention_nudge` (held-intention / commitment contradiction); pattern and
+ * absence follow in P5/P6. These are the ONLY kinds the "Insights" toggle
+ * governs (gate 0). Lookup-grade kinds are unaffected by that toggle.
+ */
+export const INFERENCE_KINDS = new Set(["intention_nudge"]);
+
+/**
+ * Every content kind that may be surfaced as of this phase = P2/P3 lookup-grade
+ * kinds ∪ the inference-grade kinds enabled so far (P4 → intention_nudge).
+ * Gate 4 rejects any kind not in this set (`kind_not_enabled`).
+ */
+export const ENABLED_KINDS = new Set([
+  ...P2_ENABLED_KINDS,
+  ...INFERENCE_KINDS,
+]);
+
 /** Lookup-grade kinds that need ≥1 receipt (spec 02 §5.4 gate 4). */
 export const LOOKUP_KINDS = new Set([
   "loop_nudge",
   "date_nudge",
   "edge_nudge",
   "rule_applied",
+]);
+
+/**
+ * Kinds that require ≥1 receipt at gate 4. Lookup-grade kinds always do;
+ * `intention_nudge` is inference-grade but still lookup-*threshold* (spec 03 P4:
+ * "lookup-grade threshold … still needs the commitment's source memory as
+ * evidence, ≥1 receipt, always cite the original commitment"). Pattern/absence
+ * carry stricter thresholds handled separately in P5/P6.
+ */
+export const MIN_ONE_RECEIPT_KINDS = new Set([
+  ...LOOKUP_KINDS,
+  "intention_nudge",
 ]);
 
 /** Cooldown after an `ignored` reaction (days). */
@@ -36,6 +67,7 @@ export type Seam = "open" | "mid_task";
 export type Channel = "conversation" | "push" | "chip";
 
 export type SuppressedReason =
+  | "insights_disabled"
   | "ledger_dismissed"
   | "ledger_ignored_cooldown"
   | "ledger_engaged_no_new_evidence"
@@ -75,6 +107,12 @@ export interface LedgerEntry {
 
 export interface GateInput {
   candidate: NudgeCandidate;
+  /**
+   * "Insights" toggle (spec 03 P4). When explicitly `false`, INFERENCE-grade
+   * kinds are suppressed at gate 0. Optional so existing lookup-grade callers
+   * and tests need no change; treated as enabled unless `=== false`.
+   */
+  insightsEnabled?: boolean;
   /** Non-suppressed history for this subject (any channel). */
   subjectLedger: LedgerEntry[];
   /** User mentioned the subject themselves in the last 48h. */
@@ -112,6 +150,24 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // ---------------------------------------------------------------------------
 // Individual gates (exported for exhaustive unit tests)
 // ---------------------------------------------------------------------------
+
+/**
+ * g0 Insights toggle (spec 03 P4). The FIRST gate: when the user has turned
+ * "Insights" off, every INFERENCE-grade kind (a claim ABOUT the user) is
+ * suppressed before any other consideration. Lookup-grade kinds (rule/date/
+ * loop/edge) pass straight through — the toggle never silences things the user
+ * explicitly said. `insightsEnabled` defaults to enabled (only `=== false`
+ * blocks) so lookup-grade paths and existing tests are unaffected.
+ */
+export function gateInsights(
+  candidate: NudgeCandidate,
+  insightsEnabled: boolean | undefined,
+): GateOutcome | null {
+  if (insightsEnabled === false && INFERENCE_KINDS.has(candidate.kind)) {
+    return { decision: "suppress", reason: "insights_disabled" };
+  }
+  return null;
+}
 
 /**
  * g1 Ledger — same subject reaction history.
@@ -182,10 +238,12 @@ export function gateSeam(seam: Seam): GateOutcome | null {
  * pattern/absence (and any other non-enabled kind) rejected outright.
  */
 export function gateEvidence(candidate: NudgeCandidate): GateOutcome | null {
-  if (!P2_ENABLED_KINDS.has(candidate.kind)) {
+  if (!ENABLED_KINDS.has(candidate.kind)) {
     return { decision: "suppress", reason: "kind_not_enabled" };
   }
-  if (LOOKUP_KINDS.has(candidate.kind) && candidate.evidence.length < 1) {
+  // Lookup-grade kinds AND intention_nudge require ≥1 receipt. For intention
+  // that receipt is ALWAYS the commitment's source memory (spec 03 P4).
+  if (MIN_ONE_RECEIPT_KINDS.has(candidate.kind) && candidate.evidence.length < 1) {
     return { decision: "suppress", reason: "evidence_insufficient" };
   }
   // Future: pattern needs ≥5 AND confidence ≥0.8 (P5). Not enabled here.
@@ -231,6 +289,10 @@ export function gateBudget(input: {
  * orchestrator decides whether to log it.
  */
 export function runGates(input: GateInput): GateOutcome {
+  // g0 Insights toggle — suppress inference-grade kinds when off (spec 03 P4).
+  const g0 = gateInsights(input.candidate, input.insightsEnabled);
+  if (g0) return g0;
+
   const g1 = gateLedger(input.candidate, input.subjectLedger, input.now);
   if (g1) return g1;
 

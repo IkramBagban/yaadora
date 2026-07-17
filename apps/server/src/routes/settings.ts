@@ -13,6 +13,9 @@ const log = createLogger("server:settings");
  *  - transcriptRetentionDays: null = forever, 0 = digest immediately, N = days
  *  - quietHoursStart / quietHoursEnd: local times (HH:MM or HH:MM:SS)
  *  - maxDailySurfacings: proactive budget across channels
+ *  - insightsEnabled: "Insights" toggle (spec 03 P4). false suppresses
+ *    inference-grade proactive kinds (intention_nudge; pattern/absence later);
+ *    lookup-grade kinds (rule/date/loop/edge) are unaffected.
  */
 
 const timeRe = /^([01]?\d|2[0-3]):([0-5]\d)(:([0-5]\d))?$/;
@@ -44,12 +47,14 @@ function serializePrivacy(row: {
   quietHoursStart: unknown;
   quietHoursEnd: unknown;
   maxDailySurfacings: number;
+  insightsEnabled: boolean;
 }) {
   return {
     transcriptRetentionDays: row.transcriptRetentionDays,
     quietHoursStart: timeToString(row.quietHoursStart),
     quietHoursEnd: timeToString(row.quietHoursEnd),
     maxDailySurfacings: row.maxDailySurfacings,
+    insightsEnabled: row.insightsEnabled,
   };
 }
 
@@ -65,13 +70,15 @@ const PatchBody = z
     quietHoursStart: z.string().regex(timeRe, "quietHoursStart must be HH:MM[:SS]").optional(),
     quietHoursEnd: z.string().regex(timeRe, "quietHoursEnd must be HH:MM[:SS]").optional(),
     maxDailySurfacings: z.number().int().min(0).max(50).optional(),
+    insightsEnabled: z.boolean().optional(),
   })
   .refine(
     (d) =>
       d.transcriptRetentionDays !== undefined ||
       d.quietHoursStart !== undefined ||
       d.quietHoursEnd !== undefined ||
-      d.maxDailySurfacings !== undefined,
+      d.maxDailySurfacings !== undefined ||
+      d.insightsEnabled !== undefined,
     { message: "At least one field is required." },
   );
 
@@ -86,6 +93,7 @@ export async function getPrivacySettings(req: Request): Promise<Response> {
         quietHoursStart: users.quietHoursStart,
         quietHoursEnd: users.quietHoursEnd,
         maxDailySurfacings: users.maxDailySurfacings,
+        insightsEnabled: users.insightsEnabled,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -119,6 +127,7 @@ export async function patchPrivacySettings(req: Request): Promise<Response> {
     quietHoursStart?: string;
     quietHoursEnd?: string;
     maxDailySurfacings?: number;
+    insightsEnabled?: boolean;
   } = {};
 
   if (parsed.data.transcriptRetentionDays !== undefined) {
@@ -133,6 +142,9 @@ export async function patchPrivacySettings(req: Request): Promise<Response> {
   if (parsed.data.maxDailySurfacings !== undefined) {
     patch.maxDailySurfacings = parsed.data.maxDailySurfacings;
   }
+  if (parsed.data.insightsEnabled !== undefined) {
+    patch.insightsEnabled = parsed.data.insightsEnabled;
+  }
 
   try {
     const [row] = await db
@@ -144,6 +156,7 @@ export async function patchPrivacySettings(req: Request): Promise<Response> {
         quietHoursStart: users.quietHoursStart,
         quietHoursEnd: users.quietHoursEnd,
         maxDailySurfacings: users.maxDailySurfacings,
+        insightsEnabled: users.insightsEnabled,
       });
 
     if (!row) return notFound("User not found.");

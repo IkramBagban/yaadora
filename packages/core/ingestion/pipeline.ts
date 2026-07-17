@@ -39,6 +39,18 @@ const log = createLogger("ingestion:pipeline");
 // than ordinary retrieval. This is cosine distance (lower is closer).
 export const LOOP_RESOLUTION_MAX_DISTANCE = 0.12;
 
+/**
+ * Commitment loops are self-scoped (spec 02 §2.3) — "I'm done with consulting"
+ * names no entity — so the entity-scoped resolution path (below) can never
+ * close them. Held-intention resolution (spec 03 P4) instead matches an open
+ * COMMITMENT loop by embedding proximity alone, with a threshold that is looser
+ * than the entity path but still conservative. This is a SAFE direction to err:
+ * a false resolution only makes the system go quiet on a commitment (the side
+ * spec 01 §2 chose), and it only runs when extraction explicitly flagged
+ * `resolvesLoop` — never on a passing mention.
+ */
+export const COMMITMENT_RESOLUTION_MAX_DISTANCE = 0.35;
+
 function parseDate(iso: string | null): Date | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -160,9 +172,16 @@ export async function upsertStandingRule(params: {
 }
 
 /**
- * Resolve an existing loop only when extraction explicitly closed it, the source
- * memory links to an entity, and the closest loop is a very close semantic match.
- * Requiring all three is intentional: a false resolution is worse than silence.
+ * Resolve an existing loop only when extraction explicitly flagged `resolvesLoop`.
+ * Two paths:
+ *  - Entity-scoped (any kind): requires an entity link AND a very close semantic
+ *    match (LOOP_RESOLUTION_MAX_DISTANCE). Requiring both is intentional — for
+ *    entity-attached loops a false resolution is worse than silence.
+ *  - Commitment (held intentions, spec 03 P4): self-scoped, so it matches the
+ *    closest OPEN commitment loop by embedding alone under a conservative
+ *    threshold, no entity required. Erring toward resolution here only makes the
+ *    system quieter (the side spec 01 §2 chose), and it still fires only on an
+ *    explicit `resolvesLoop` signal — never a passing mention.
  */
 export async function resolveOpenLoop(params: {
   userId: string;
@@ -180,31 +199,65 @@ export async function resolveOpenLoop(params: {
       .map((entity) => resolveEntity(entity.surface, resolution))
       .filter((id): id is string => id !== null),
   )];
-  if (!entityIds.length) return null;
+  // NB: no early return on empty entityIds — commitment loops (Path 2 below)
+  // are self-scoped and resolve without any entity link (spec 03 P4).
 
   // Drizzle cannot bind a JavaScript number[] as a pgvector parameter. Keep
   // vector serialization in @repo/db alongside every other vector query.
   const vector = toVectorLiteral(embedding);
   const distance = sql<number>`(${openLoops.embedding} <=> ${vector}::vector)`;
-  const [candidate] = await db
+
+  // Path 1 — entity-scoped, strict (any kind that names an entity). Unchanged.
+  if (entityIds.length) {
+    const [candidate] = await db
+      .select({ id: openLoops.id, distance })
+      .from(openLoops)
+      .where(
+        and(
+          eq(openLoops.userId, userId),
+          eq(openLoops.status, "open"),
+          inArray(openLoops.entityId, entityIds),
+        ),
+      )
+      .orderBy(distance)
+      .limit(1);
+
+    if (candidate && candidate.distance <= LOOP_RESOLUTION_MAX_DISTANCE) {
+      await db
+        .update(openLoops)
+        .set({ status: "resolved", resolvedBy: memoryId })
+        .where(and(eq(openLoops.id, candidate.id), eq(openLoops.status, "open")));
+      return candidate.id;
+    }
+  }
+
+  // Path 2 — held-intention resolution (spec 03 P4). Commitment loops are
+  // self-scoped (usually no entity), so match the closest OPEN commitment by
+  // embedding alone under a conservative threshold, no entity requirement. This
+  // is how a conversational "it's a deliberate call" reply, captured as a
+  // memory, closes the commitment loop so its nudge never fires again.
+  const [commitment] = await db
     .select({ id: openLoops.id, distance })
     .from(openLoops)
     .where(
       and(
         eq(openLoops.userId, userId),
         eq(openLoops.status, "open"),
-        inArray(openLoops.entityId, entityIds),
+        eq(openLoops.kind, "commitment"),
       ),
     )
     .orderBy(distance)
     .limit(1);
 
-  if (!candidate || candidate.distance > LOOP_RESOLUTION_MAX_DISTANCE) return null;
-  await db
-    .update(openLoops)
-    .set({ status: "resolved", resolvedBy: memoryId })
-    .where(and(eq(openLoops.id, candidate.id), eq(openLoops.status, "open")));
-  return candidate.id;
+  if (commitment && commitment.distance <= COMMITMENT_RESOLUTION_MAX_DISTANCE) {
+    await db
+      .update(openLoops)
+      .set({ status: "resolved", resolvedBy: memoryId })
+      .where(and(eq(openLoops.id, commitment.id), eq(openLoops.status, "open")));
+    return commitment.id;
+  }
+
+  return null;
 }
 
 /** Upsert every loop derived from a source memory. Retry-safe by source + shape. */

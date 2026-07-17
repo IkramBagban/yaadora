@@ -34,6 +34,7 @@ import {
   type EntityContext,
 } from "./entity-context";
 import {
+  detectCommitmentContradictions,
   evaluateAndRecord,
   loadAwarenessCandidates,
   loadPriorSurfacingIds,
@@ -313,15 +314,32 @@ export async function answerQuestion(params: {
       ),
       (async () => {
         try {
-          const candidates = await loadAwarenessCandidates({
-            userId,
-            now,
-            linkedEntityIds,
-          });
+          // Lookup-grade candidates (loops/dates/edges) and the inference-grade
+          // held-intention contradiction check (spec 03 P4) load concurrently,
+          // then merge into ONE candidate list the awareness pass picks from.
+          const [candidates, intentionCandidates] = await Promise.all([
+            loadAwarenessCandidates({
+              userId,
+              now,
+              linkedEntityIds,
+            }),
+            detectCommitmentContradictions({
+              userId,
+              userTurn: question,
+              previousUserTurn,
+              now,
+            }).catch((err) => {
+              log.warn(
+                "commitment contradiction check failed; continuing",
+                err as Error,
+              );
+              return [];
+            }),
+          ]);
           const awareness = await runAwarenessPass({
             userTurn: question,
             recentTurns,
-            candidates,
+            candidates: [...candidates, ...intentionCandidates],
             priorSurfacingIds,
           });
           return { awareness };
@@ -358,6 +376,9 @@ export async function answerQuestion(params: {
           nudgeDirective = {
             text: aw.candidate.oneLineNudge,
             evidence: aw.candidate.evidence,
+            // Carries the kind so renderNudge can force question-framing for
+            // intention_nudge (spec 03 P4 — framing is the feature).
+            kind: aw.candidate.kind,
           };
           wovenNudge = {
             surfacingId: gated.surfacingId,

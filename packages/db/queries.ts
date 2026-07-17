@@ -1530,3 +1530,55 @@ export async function getOpenLoopsForEntities(
     entityId: String(r.entity_id),
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Held intentions (spec 03 P4) — commitment-loop proximity match.
+// ---------------------------------------------------------------------------
+
+export interface CommitmentLoopCandidate {
+  id: string;
+  title: string;
+  sourceMemory: string;
+  /** cosine distance from the turn embedding to the loop embedding (lower = closer). */
+  distance: number;
+}
+
+/**
+ * Open `commitment` loops closest (by embedding) to the current turn (spec 03
+ * P4). This is the CHEAP prefilter for the held-intention contradiction check:
+ * it finds commitments that are semantically *near* what the user is talking
+ * about now. It is NOT a contradiction detector — proximity means "same topic",
+ * which could be agreement, tension, or an unrelated match. A fast-tier confirm
+ * decides genuine tension afterward (bias to silence).
+ *
+ * Commitments are self-scoped (usually no entity), so we deliberately do NOT
+ * filter on `entity_id`. Only loops WITH an embedding are considered; results
+ * beyond `maxDistance` are dropped. Ordered nearest-first.
+ */
+export async function findCommitmentLoopCandidates(
+  userId: string,
+  embedding: number[],
+  maxDistance: number,
+  limit = 5,
+): Promise<CommitmentLoopCandidate[]> {
+  if (!embedding.length) return [];
+  const vec = toVectorLiteral(embedding);
+  const rows = await db.execute(sql`
+    SELECT id, title, source_memory, (embedding <=> ${vec}::vector) AS distance
+    FROM open_loops
+    WHERE user_id = ${userId}
+      AND status = 'open'
+      AND kind = 'commitment'
+      AND embedding IS NOT NULL
+    ORDER BY embedding <=> ${vec}::vector ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows)
+    .map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      sourceMemory: String(r.source_memory),
+      distance: Number(r.distance),
+    }))
+    .filter((r) => Number.isFinite(r.distance) && r.distance <= maxDistance);
+}

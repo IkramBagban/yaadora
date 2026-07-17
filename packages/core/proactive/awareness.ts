@@ -23,7 +23,7 @@ export const AWARENESS_DEADLINE_MS = 800;
 
 /** Attachment the model may choose among (or none). */
 export interface AwarenessAttachment {
-  kind: "loop_nudge" | "date_nudge" | "edge_nudge";
+  kind: "loop_nudge" | "date_nudge" | "edge_nudge" | "intention_nudge";
   subjectType: "open_loop" | "entity" | "entity_edge";
   subjectId: string;
   title: string;
@@ -132,8 +132,10 @@ ${priors}
 
 Decide:
 1. Is this a natural seam for a friend to interject (open) or is the user mid-task (mid_task)?
-2. If open AND a candidate is genuinely useful right now, pick ONE by subjectId and write a single concrete one-line nudge (no cliffhangers, no "by the way…" padding). Prefer silence when the fit is weak.
+2. If open AND a candidate is genuinely useful right now, pick ONE by subjectId and write a single concrete one-line nudge (no cliffhangers, no "by the way…" padding). Prefer silence when the fit is weak. When a candidate has a suggested phrasing, prefer it.
 3. If the user's turn clearly addresses a prior nudge, set engagedWithPrior to that id.
+
+For an intention_nudge (kind=intention_nudge): this holds a PAST commitment up beside what the user is doing now. It MUST be phrased as an open QUESTION, never a judgment — acknowledge they may have deliberately changed their mind; never scold, never assume they've drifted. If you cannot phrase it as a genuine, non-accusatory question, stay silent.
 
 Bias hard toward silence. Never invent candidates not in the list.`;
 }

@@ -418,6 +418,7 @@ export async function loadUserBudgetSettings(userId: string): Promise<{
   quietHoursStart: string;
   quietHoursEnd: string;
   maxDailySurfacings: number;
+  insightsEnabled: boolean;
 }> {
   const [u] = await db
     .select({
@@ -425,6 +426,7 @@ export async function loadUserBudgetSettings(userId: string): Promise<{
       quietHoursStart: users.quietHoursStart,
       quietHoursEnd: users.quietHoursEnd,
       maxDailySurfacings: users.maxDailySurfacings,
+      insightsEnabled: users.insightsEnabled,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -435,6 +437,8 @@ export async function loadUserBudgetSettings(userId: string): Promise<{
     quietHoursStart: String(u?.quietHoursStart ?? "22:00:00"),
     quietHoursEnd: String(u?.quietHoursEnd ?? "08:00:00"),
     maxDailySurfacings: u?.maxDailySurfacings ?? 3,
+    // Default to enabled when the row/column is missing (matches the DB default).
+    insightsEnabled: u?.insightsEnabled ?? true,
   };
 }
 
@@ -577,6 +581,7 @@ export async function evaluateAndRecord(params: {
 
   const outcome = runGates({
     candidate: params.candidate,
+    insightsEnabled: settings.insightsEnabled,
     subjectLedger,
     alreadyKnown,
     seam: params.seam,

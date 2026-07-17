@@ -99,10 +99,15 @@ Rules:
   preferences, or speculative possibilities into loops. entityRef is the named
   entity surface when one is explicit, otherwise null. Resolve dueAt to ISO 8601
   when it is explicit; otherwise null. Return [] when uncertain.
-- RESOLVES LOOP: set resolvesLoop only when this memory clearly says an existing
-  unfinished matter was completed, settled, cancelled, or otherwise closed. It is
-  a short faithful description of the closed matter, not an inference. Otherwise
-  return null.
+- RESOLVES LOOP: set resolvesLoop when this memory clearly says an existing
+  unfinished matter was completed, settled, cancelled, or otherwise closed. This
+  ALSO covers a prior COMMITMENT or intention the user is now deliberately
+  changing, updating, reversing, or no longer holding ("actually I've decided to
+  take the consulting work after all", "I changed my mind about going full-time
+  on product", "that was a deliberate call"): a deliberate change closes the old
+  commitment. It is a short faithful description of the closed/changed matter,
+  not an inference. Do NOT set it for ordinary progress or for merely mentioning
+  the topic again. Otherwise return null.
 Never invent details not present in the memory.`;
 
 export interface ExtractionContext {

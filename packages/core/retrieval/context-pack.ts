@@ -51,6 +51,12 @@ export interface RuleSlot {
 export interface NudgeDirective {
   text: string;
   evidence: string[];
+  /**
+   * Content kind (spec 02 §5.4). Drives kind-specific weaving guidance — most
+   * importantly `intention_nudge`, whose directive MUST force a question, never
+   * a judgment (spec 03 P4: "framing is the feature").
+   */
+  kind?: string;
 }
 
 /** A near-dated open loop rendered as one "open thread" line. */
@@ -120,6 +126,17 @@ function renderLoops(loops: LoopLine[]): string {
 }
 function renderNudge(nudge: NudgeDirective): string {
   const refs = nudge.evidence.length ? ` Evidence: ${nudge.evidence.join(", ")}.` : "";
+
+  // Held intentions (spec 03 P4) — framing IS the feature. This nudge holds a
+  // PAST commitment up beside what the user is doing now, and it must land as an
+  // open question, never a verdict.
+  if (nudge.kind === "intention_nudge") {
+    return [
+      `You may gently raise ONE thing IF a natural seam appears, and ONLY as an open question: ${nudge.text}.${refs}`,
+      "This concerns a commitment the user made earlier that their current message may be in tension with. Frame it as a genuine question that names the earlier commitment and asks whether it has changed. It may well be a deliberate, sensible update — treat it that way. Do NOT scold, do NOT assume they've drifted or failed, do NOT lecture. Cite the receipt so they can tap the original. If the moment isn't right, skip it entirely.",
+    ].join("\n");
+  }
+
   return [
     `You may bring up ONE thing naturally if a seam appears: ${nudge.text}.${refs}`,
     "Weave it in like a friend would; do not force it; skip it if the moment is wrong.",

@@ -182,6 +182,8 @@ export interface PrivacySettings {
   quietHoursStart: string;
   quietHoursEnd: string;
   maxDailySurfacings: number;
+  /** "Insights" toggle (spec 03 P4). false suppresses inference-grade nudges. */
+  insightsEnabled: boolean;
 }
 
 export const api = {

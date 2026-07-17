@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { View, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, StyleSheet, ScrollView, ActivityIndicator, Alert, Switch } from 'react-native';
 import { useRouter, type Href } from 'expo-router';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
@@ -8,6 +8,7 @@ import { useUser, useClerk } from '@clerk/expo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../src/components/AppText';
 import { PressableScale } from '../src/components/PressableScale';
+import { api } from '../src/api/client';
 import { createMobileLogger } from '../src/lib/log';
 import { radius, space } from '../src/theme/tokens';
 import { useTheme } from '../src/theme/useTheme';
@@ -36,6 +37,44 @@ export default function ProfileScreen() {
   const { user, isLoaded } = useUser();
   const { signOut } = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+
+  // "Insights" toggle (spec 03 P4). null = not yet loaded; disables the switch.
+  const [insightsEnabled, setInsightsEnabled] = useState<boolean | null>(null);
+  const [savingInsights, setSavingInsights] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void api
+      .getPrivacySettings()
+      .then((s) => {
+        if (alive) setInsightsEnabled(s.insightsEnabled);
+      })
+      .catch((err) => {
+        log.warn('load privacy settings failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const onToggleInsights = (next: boolean) => {
+    const prev = insightsEnabled;
+    setInsightsEnabled(next); // optimistic
+    setSavingInsights(true);
+    void api
+      .patchPrivacySettings({ insightsEnabled: next })
+      .then((s) => setInsightsEnabled(s.insightsEnabled))
+      .catch((err) => {
+        setInsightsEnabled(prev ?? false); // revert
+        log.error('save insights toggle failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+        Alert.alert('Could not save', 'Please try again.');
+      })
+      .finally(() => setSavingInsights(false));
+  };
 
   const onSignOut = () => {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
@@ -135,6 +174,32 @@ export default function ProfileScreen() {
                 chevron
               />
             </PressableScale>
+          </View>
+
+          <AppText variant="micro" tone="ink3" style={styles.sectionLabel}>
+            Insights
+          </AppText>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+            <View style={styles.row}>
+              <View style={styles.rowIcon}>
+                <Feather name="zap" size={18} color={colors.ink2} />
+              </View>
+              <View style={styles.rowText}>
+                <AppText variant="sub" tone="ink">
+                  Insights
+                </AppText>
+                <AppText variant="caption" tone="ink3">
+                  Let Yaadora gently raise a past commitment when it seems in tension with something new — always as a question. Your reminders and standing rules aren&apos;t affected.
+                </AppText>
+              </View>
+              <Switch
+                accessibilityLabel="Toggle insights"
+                value={insightsEnabled ?? false}
+                onValueChange={onToggleInsights}
+                disabled={insightsEnabled === null || savingInsights}
+                trackColor={{ true: colors.accent, false: colors.hairline }}
+              />
+            </View>
           </View>
 
           <AppText variant="micro" tone="ink3" style={styles.sectionLabel}>

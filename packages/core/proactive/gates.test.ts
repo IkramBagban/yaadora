@@ -3,6 +3,7 @@ import {
   gateAlreadyKnown,
   gateBudget,
   gateEvidence,
+  gateInsights,
   gateLedger,
   gateSeam,
   hardBlockMidTask,
@@ -14,6 +15,8 @@ import {
   runGates,
   IGNORED_COOLDOWN_DAYS,
   P2_ENABLED_KINDS,
+  INFERENCE_KINDS,
+  ENABLED_KINDS,
   type GateInput,
   type LedgerEntry,
   type NudgeCandidate,
@@ -468,6 +471,141 @@ describe("runGates order", () => {
         baseInput({ channel: "push", inQuietHours: true }),
       ),
     ).toEqual({ decision: "suppress", reason: "quiet_hours" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// g0 Insights toggle + intention_nudge enablement (spec 03 P4)
+//
+// SUPPRESSION IS THE HARD CONTRACT here (spec 03 eval-suite CI asymmetry: a
+// suppression regression BLOCKS release). When Insights is off, no
+// inference-grade nudge may EVER reach the user; lookup-grade kinds must be
+// completely unaffected.
+// ---------------------------------------------------------------------------
+
+const INTENTION = (over: Partial<NudgeCandidate> = {}): NudgeCandidate =>
+  cand({
+    kind: "intention_nudge",
+    subjectType: "open_loop",
+    oneLineNudge:
+      "Back in January you said you were done with consulting — has that changed, or is this a runway thing?",
+    ...over,
+  });
+
+describe("kind-set contract (spec 03 P4)", () => {
+  test("intention_nudge is inference-grade AND enabled, but not a P2 lookup kind", () => {
+    expect(INFERENCE_KINDS.has("intention_nudge")).toBe(true);
+    expect(ENABLED_KINDS.has("intention_nudge")).toBe(true);
+    expect(P2_ENABLED_KINDS.has("intention_nudge")).toBe(false);
+  });
+
+  test("lookup kinds are enabled but NOT inference-grade", () => {
+    for (const kind of ["loop_nudge", "date_nudge", "edge_nudge"]) {
+      expect(ENABLED_KINDS.has(kind)).toBe(true);
+      expect(INFERENCE_KINDS.has(kind)).toBe(false);
+    }
+  });
+
+  test("pattern/absence are neither enabled nor (yet) inference-listed here", () => {
+    for (const kind of ["pattern_nudge", "absence_nudge"]) {
+      expect(ENABLED_KINDS.has(kind)).toBe(false);
+    }
+  });
+});
+
+describe("gateInsights (g0) — Insights toggle", () => {
+  test("inference-grade kind + insights OFF → suppress insights_disabled", () => {
+    expect(gateInsights(INTENTION(), false)).toEqual({
+      decision: "suppress",
+      reason: "insights_disabled",
+    });
+  });
+
+  test("inference-grade kind + insights ON → pass", () => {
+    expect(gateInsights(INTENTION(), true)).toBeNull();
+  });
+
+  test("inference-grade kind + insights undefined → pass (default enabled)", () => {
+    expect(gateInsights(INTENTION(), undefined)).toBeNull();
+  });
+
+  test("lookup-grade kinds are UNAFFECTED by the toggle (off)", () => {
+    for (const kind of ["loop_nudge", "date_nudge", "edge_nudge"]) {
+      expect(gateInsights(cand({ kind }), false)).toBeNull();
+    }
+  });
+});
+
+describe("runGates g0 ordering — insights suppresses before everything", () => {
+  test("insights OFF beats an otherwise-approvable intention nudge", () => {
+    expect(
+      runGates(
+        baseInput({ candidate: INTENTION(), insightsEnabled: false }),
+      ),
+    ).toEqual({ decision: "suppress", reason: "insights_disabled" });
+  });
+
+  test("insights OFF fires before the ledger gate (g0 before g1)", () => {
+    // A brand-new subject with a clean ledger still suppresses on the toggle.
+    expect(
+      runGates(
+        baseInput({
+          candidate: INTENTION(),
+          insightsEnabled: false,
+          subjectLedger: [],
+        }),
+      ),
+    ).toEqual({ decision: "suppress", reason: "insights_disabled" });
+  });
+
+  test("intention nudge with insights ON + evidence + open seam → approve", () => {
+    expect(
+      runGates(
+        baseInput({ candidate: INTENTION(), insightsEnabled: true }),
+      ),
+    ).toEqual({ decision: "approve" });
+  });
+
+  test("lookup-grade nudge still approves with insights OFF", () => {
+    expect(
+      runGates(baseInput({ insightsEnabled: false })),
+    ).toEqual({ decision: "approve" });
+  });
+});
+
+describe("gateEvidence — intention_nudge enablement + receipt floor (spec 03 P4)", () => {
+  test("intention_nudge is an enabled kind (not kind_not_enabled)", () => {
+    expect(P2_ENABLED_KINDS.has("intention_nudge")).toBe(false); // it's inference-grade
+    // …but it IS enabled overall, so gateEvidence must not reject the kind:
+    const out = gateEvidence(INTENTION({ evidence: ["m1"] }));
+    expect(out).toBeNull();
+  });
+
+  test("intention_nudge with ZERO receipts → evidence_insufficient", () => {
+    expect(gateEvidence(INTENTION({ evidence: [] }))).toEqual({
+      decision: "suppress",
+      reason: "evidence_insufficient",
+    });
+  });
+
+  test("intention_nudge always needs ≥1 receipt via runGates", () => {
+    expect(
+      runGates(
+        baseInput({
+          candidate: INTENTION({ evidence: [] }),
+          insightsEnabled: true,
+        }),
+      ),
+    ).toEqual({ decision: "suppress", reason: "evidence_insufficient" });
+  });
+
+  test("still-inference-grade pattern/absence remain disabled", () => {
+    for (const kind of ["pattern_nudge", "absence_nudge"]) {
+      expect(gateEvidence(cand({ kind, evidence: ["a"] }))).toEqual({
+        decision: "suppress",
+        reason: "kind_not_enabled",
+      });
+    }
   });
 });
 
