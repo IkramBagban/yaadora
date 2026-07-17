@@ -127,6 +127,10 @@ export function ReminderComposer({
   const insets = useSafeAreaInsets();
   const editing = Boolean(target);
 
+  // `visible` isn't read inside buildPresets, but it's a deliberate dependency:
+  // it forces presets to recompute against a fresh `new Date()` each time the
+  // modal reopens, so "today"/"tomorrow" stay accurate across sessions.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const presets = useMemo(() => buildPresets(new Date()), [visible]);
   const [text, setText] = useState('');
   const [mode, setMode] = useState<Recurrence>('once');

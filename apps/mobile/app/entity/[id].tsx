@@ -471,7 +471,7 @@ function CorrectFactModal({
         ) : null}
 
         <AppText variant="caption" tone="ink3" style={styles.modalHint}>
-          Tell me what's actually true{entityName ? ` about ${entityName}` : ''} in your
+          Tell me what&apos;s actually true{entityName ? ` about ${entityName}` : ''} in your
           own words. I keep the original memory untouched and update what I understood.
         </AppText>
 
