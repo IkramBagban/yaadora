@@ -1,0 +1,19 @@
+name: Fetch VM Logs
+on:
+  workflow_dispatch:
+jobs:
+  fetch-logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch logs
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: ${{ secrets.VM_PORT }}
+          script: |
+            echo "=== WORKER LOGS ==="
+            docker logs --tail 200 yaadora-worker
+            echo "=== SERVER LOGS ==="
+            docker logs --tail 200 yaadora-server
