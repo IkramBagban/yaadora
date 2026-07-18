@@ -231,30 +231,33 @@ export async function resolveOpenLoop(params: {
     }
   }
 
-  // Path 2 — held-intention resolution (spec 03 P4). Commitment loops are
-  // self-scoped (usually no entity), so match the closest OPEN commitment by
-  // embedding alone under a conservative threshold, no entity requirement. This
-  // is how a conversational "it's a deliberate call" reply, captured as a
-  // memory, closes the commitment loop so its nudge never fires again.
-  const [commitment] = await db
+  // Path 2 — self-scoped resolution for commitments AND threads (spec 03 P4,
+  // spec 04 §3.1). Commitment loops are self-scoped (usually no entity); a
+  // `thread` may be self-scoped too (an exam names no entity). Both close when
+  // a later memory that extraction flagged `resolvesLoop` matches the closest
+  // OPEN loop of these kinds by embedding alone, under a conservative threshold,
+  // no entity requirement. This is how "went well, done with it" (2.1) or "it's
+  // a deliberate call" (P4), captured as a memory, closes the loop so its
+  // check-in never fires again. Entity-scoped threads are handled by Path 1.
+  const [selfScoped] = await db
     .select({ id: openLoops.id, distance })
     .from(openLoops)
     .where(
       and(
         eq(openLoops.userId, userId),
         eq(openLoops.status, "open"),
-        eq(openLoops.kind, "commitment"),
+        inArray(openLoops.kind, ["commitment", "thread"]),
       ),
     )
     .orderBy(distance)
     .limit(1);
 
-  if (commitment && commitment.distance <= COMMITMENT_RESOLUTION_MAX_DISTANCE) {
+  if (selfScoped && selfScoped.distance <= COMMITMENT_RESOLUTION_MAX_DISTANCE) {
     await db
       .update(openLoops)
       .set({ status: "resolved", resolvedBy: memoryId })
-      .where(and(eq(openLoops.id, commitment.id), eq(openLoops.status, "open")));
-    return commitment.id;
+      .where(and(eq(openLoops.id, selfScoped.id), eq(openLoops.status, "open")));
+    return selfScoped.id;
   }
 
   return null;

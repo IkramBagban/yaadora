@@ -93,7 +93,7 @@ describe("pickBestObservation — strict bar (spec 02 §5.4)", () => {
   });
 });
 
-describe("context pack — observation slot", () => {
+describe("context pack — onYourMind slot (spec 04 §3.4)", () => {
   const base: ContextPackSlots = {
     profile: null,
     weekDigest: null,
@@ -102,25 +102,27 @@ describe("context pack — observation slot", () => {
     nudge: null,
   };
 
-  test("renders the observation with its id, receipts, and a stay-silent instruction", () => {
+  test("renders a pattern dossier with its id, receipts, and stay-silent guidance", () => {
     const { text } = buildContextPackText({
       ...base,
-      observation: { id: "f1", text: "Projects stall at week three.", receipts: FIVE },
+      onYourMind: [
+        { kind: "pattern", id: "f1", summary: "Projects stall at week three.", receipts: FIVE },
+      ],
     });
     expect(text).toContain("Projects stall at week three.");
     expect(text).toContain("id: f1");
-    expect(text).toContain("note_observation");
-    expect(text.toLowerCase()).toContain("only if");
+    expect(text).toContain("note_surfaced");
+    expect(text.toLowerCase()).toContain("raise nothing");
   });
 
-  test("observation is the FIRST slot dropped under budget pressure (lowest priority)", () => {
+  test("onYourMind is the FIRST slot dropped under budget pressure (lowest priority)", () => {
     // A tiny budget that fits the header + rules but nothing else: the rule
-    // (highest priority) survives, the observation does not.
+    // (highest priority) survives, the onYourMind section does not.
     const { text } = buildContextPackText(
       {
         ...base,
         rules: [{ id: "r1", ruleText: "Always ask the four questions." }],
-        observation: { id: "f1", text: "A pattern.", receipts: FIVE },
+        onYourMind: [{ kind: "pattern", id: "f1", summary: "A pattern.", receipts: FIVE }],
       },
       50,
     );

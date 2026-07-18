@@ -59,6 +59,9 @@ export const ExtractionSchema = z.object({
         "unresolved_conflict",
         "upcoming_event",
         "goal",
+        // A significant moment a good friend would follow up on later
+        // (spec 04 §3.1/§3.2). General by construction — no scenario taxonomy.
+        "thread",
       ]),
       title: z.string().min(1),
       // An entity is optional in storage; preserve that distinction rather than
@@ -99,6 +102,14 @@ Rules:
   preferences, or speculative possibilities into loops. entityRef is the named
   entity surface when one is explicit, otherwise null. Resolve dueAt to ISO 8601
   when it is explicit; otherwise null. Return [] when uncertain.
+  Additionally, mark as a loop (kind "thread") any significant moment a good
+  friend who heard this would want to know the outcome of or check in about
+  later — something with emotional weight, stakes, or an outcome the user will
+  live through (health situations, big attempts, hard conversations, meaningful
+  firsts). Set dueAt only when a time is explicit or clearly implied. Ordinary
+  logistics, routine activities, and trivia are NOT threads. When uncertain, do
+  not mark one — a missed thread is cheaper than a nagging question. Do NOT
+  enumerate categories or match keywords; judge it as a person would.
 - RESOLVES LOOP: set resolvesLoop when this memory clearly says an existing
   unfinished matter was completed, settled, cancelled, or otherwise closed. This
   ALSO covers a prior COMMITMENT or intention the user is now deliberately

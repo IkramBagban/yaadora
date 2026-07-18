@@ -6,6 +6,7 @@ import {
   reminders,
   rules,
   surfacings,
+  openLoops,
   eq,
   sql,
   getMemoriesByIds,
@@ -21,9 +22,10 @@ import {
   type RuleSlot,
   type LoopLine,
   type EntityContextSlot,
-  type ObservationSlot,
+  type OnYourMindDossier,
 } from "./context-pack";
 import { selectObservation } from "./observations";
+import { selectFollowUps, type FollowUpDossier } from "./follow-ups";
 import {
   matchStandingRules,
   shortRuleName,
@@ -277,11 +279,17 @@ export async function answerQuestion(params: {
   let linkedEntities: LinkedEntity[] = [];
   /** Their assembled context (pre-fetched into the pack, spec 02 §5.2). */
   let prefetchedContexts: EntityContext[] = [];
-  /** At most one pattern the agent MAY surface this turn (spec 03 P5). */
-  let observationSlot: ObservationSlot | null = null;
-  /** Ledger row written iff the agent actually surfaces the observation. */
-  let observationSurfacing: { surfacingId: string; evidence: string[] } | null =
-    null;
+  /** Up to 3 "on your mind" dossiers offered this turn (spec 04 §3.4) — mined
+   * patterns (P5), follow-up threads, and absence candidates. */
+  let onYourMind: OnYourMindDossier[] = [];
+  /** Offered-dossier lookup for note_surfaced: id → how to record it. Populated
+   * from `onYourMind` so a hallucinated / unoffered id can never write a row. */
+  const offeredDossiers = new Map<
+    string,
+    { ledgerKind: string; subjectType: string; receipts: string[] }
+  >();
+  /** Ledger row written iff the agent actually surfaces a dossier (note_surfaced). */
+  let surfacedDossier: { surfacingId: string; evidence: string[] } | null = null;
 
   try {
     const recentTurns = history.slice(-6).map((h) => ({
@@ -292,7 +300,10 @@ export async function answerQuestion(params: {
     // Phase A: matcher + pack SQL + turn-time entity linker + prior-nudge ids,
     // all concurrent (spec 02 §5.1/§5.2/§5.4). The linker runs alongside pack
     // assembly; entity-context assembly and awareness depend on its result.
-    const [matched, pack, linked, priorSurfacingIds, observation] =
+    // First turn of a conversation → ripeness outranks relevance in follow-up
+    // ranking (a friend opens with "how was the exam?", spec 04 §3.3).
+    const isFirstTurn = history.length === 0;
+    const [matched, pack, linked, priorSurfacingIds, observation, followUps] =
       await Promise.all([
         matchStandingRules({ userId, userTurn: question, previousUserTurn }),
         assembleContextPack({ userId, now }).catch((err) => {
@@ -307,10 +318,20 @@ export async function answerQuestion(params: {
         // P5: at most one relevant, high-support, non-dismissed pattern —
         // offered as context, surfaced only if the agent judges it fits.
         selectObservation({ userId, userTurn: question, now }),
+        // spec 04 §3.3: up to 3 follow-up / absence dossiers, same philosophy.
+        selectFollowUps({
+          userId,
+          userTurn: question,
+          conversationId,
+          now,
+          isFirstTurn,
+        }).catch((err) => {
+          log.warn("selectFollowUps failed; continuing without follow-ups", err as Error);
+          return [] as FollowUpDossier[];
+        }),
       ]);
     matchedRules = matched;
     linkedEntities = linked;
-    observationSlot = observation;
     const linkedEntityIds = linked.map((l) => l.entityId);
 
     // Phase B: pre-fetch entity context (both doorway modes share the assembler)
@@ -437,12 +458,54 @@ export async function answerQuestion(params: {
     }
     const mergedLoops = Array.from(loopById.values());
 
+    // Single-proactive-moment invariant (spec 04 §3.4): a turn never carries both
+    // a gated nudge and the onYourMind section. An approved nudge wins; otherwise
+    // offer up to 3 dossiers — follow-ups/absence first (time-sensitive), then a
+    // mined pattern if there's room. offeredDossiers gates note_surfaced.
+    if (!nudgeDirective) {
+      const dossiers: OnYourMindDossier[] = followUps.map((d) => ({
+        kind: d.kind,
+        id: d.subjectId,
+        summary: d.summary,
+        receipts: d.receipts,
+        dueAt: d.dueAt,
+        sinceThen: d.sinceThen,
+        raisingHistory: d.raisingHistory,
+      }));
+      if (observation && dossiers.length < 3) {
+        dossiers.push({
+          kind: "pattern",
+          id: observation.id,
+          summary: observation.text,
+          receipts: observation.receipts,
+        });
+      }
+      onYourMind = dossiers.slice(0, 3);
+      for (const d of onYourMind) {
+        offeredDossiers.set(d.id, {
+          ledgerKind:
+            d.kind === "pattern"
+              ? "pattern_nudge"
+              : d.kind === "followup"
+                ? "followup_nudge"
+                : "absence_nudge",
+          subjectType:
+            d.kind === "pattern"
+              ? "pattern_fact"
+              : d.kind === "followup"
+                ? "open_loop"
+                : "entity",
+          receipts: d.receipts,
+        });
+      }
+    }
+
     const hasPackContent =
       Boolean(pack) ||
       ruleSlots.length > 0 ||
       Boolean(nudgeDirective) ||
       Boolean(entityContextSlot) ||
-      Boolean(observationSlot) ||
+      onYourMind.length > 0 ||
       mergedLoops.length > 0;
     if (hasPackContent) {
       const { text } = buildContextPackText({
@@ -452,7 +515,7 @@ export async function answerQuestion(params: {
         rules: ruleSlots,
         nudge: nudgeDirective,
         entityContext: entityContextSlot,
-        observation: observationSlot,
+        onYourMind,
       });
       contextPackText = text;
     }
@@ -731,51 +794,63 @@ export async function answerQuestion(params: {
       }),
       // No execute: a terminal client tool. `hasToolCall('clarify')` stops the loop.
     }),
-    note_observation: tool({
+    note_surfaced: tool({
       description:
-        "Record that you are surfacing the pattern observation offered in the context pack. Call this ONLY when you actually raise that observation in your reply, and pass its exact id. It writes the observation to the memory ledger so it is shown with its receipts and never repeated. Do NOT call it for anything other than the offered observation, and never invent an id.",
+        "Record that you are raising one of the 'on your mind' items offered in the context pack (a pattern, a follow-up thread, or a check-in about someone). Call this ONLY when you actually bring that item up in your reply, and pass its exact id. It writes the item to the memory ledger with its receipts so it is shown as a source and not repeated. Do NOT call it for anything other than an offered item, and never invent an id.",
       inputSchema: z.object({
         id: z
           .string()
-          .describe("the exact id of the offered observation you are surfacing"),
+          .describe("the exact id of the offered item you are raising"),
       }),
       execute: async ({ id }) => {
-        // Guard: only the observation actually offered this turn can be recorded
-        // (a hallucinated id must never write a ledger row).
-        if (!observationSlot || id !== observationSlot.id) {
-          return { ok: false, error: "No such observation was offered this turn." };
+        // Guard: only an item actually offered this turn can be recorded (a
+        // hallucinated / unoffered id must never write a ledger row). Forgetting
+        // to call under-logs, which over-suppresses later — the safe direction.
+        const offered = offeredDossiers.get(id);
+        if (!offered) {
+          return { ok: false, error: "No such item was offered this turn." };
         }
-        if (observationSurfacing) {
-          return { ok: true, note: "Already recorded." };
+        if (surfacedDossier) {
+          return { ok: true, note: "Already recorded one item this turn." };
         }
         try {
           const [created] = await db
             .insert(surfacings)
             .values({
               userId,
-              kind: "pattern_nudge",
-              subjectType: "pattern_fact",
-              subjectId: observationSlot.id,
+              kind: offered.ledgerKind,
+              subjectType: offered.subjectType,
+              subjectId: id,
               channel: "conversation",
               conversationId,
-              evidence: observationSlot.receipts,
+              evidence: offered.receipts,
             })
             .returning({ id: surfacings.id });
           if (!created) return { ok: false, error: "Could not record." };
-          observationSurfacing = {
+          surfacedDossier = {
             surfacingId: created.id,
-            evidence: observationSlot.receipts,
+            evidence: offered.receipts,
           };
-          await addReceiptCitations(observationSlot.receipts);
+          // Loops track their last check-in so ranking can demote a fresh raise.
+          if (offered.subjectType === "open_loop") {
+            await db
+              .update(openLoops)
+              .set({ lastSurfacedAt: now })
+              .where(eq(openLoops.id, id))
+              .catch((err) =>
+                log.warn("failed to bump open_loops.lastSurfacedAt", err as Error),
+              );
+          }
+          await addReceiptCitations(offered.receipts);
           const step: AskStep = {
             kind: "observation",
-            label: "Noting a pattern",
+            label: "Noting something on your mind",
           };
           steps.push(step);
           onStep?.(step);
           return { ok: true };
         } catch (err) {
-          log.warn("note_observation record failed", err as Error);
+          log.warn("note_surfaced record failed", err as Error);
           return { ok: false, error: "Could not record." };
         }
       },
@@ -820,7 +895,7 @@ export async function answerQuestion(params: {
       const surfacingIds = [
         ...applied.surfacingIds,
         ...(nudgeSurfacingId ? [nudgeSurfacingId] : []),
-        ...(observationSurfacing ? [observationSurfacing.surfacingId] : []),
+        ...(surfacedDossier ? [surfacedDossier.surfacingId] : []),
       ];
       resolveResult({
         citations: clarified ? [] : Array.from(citeMap.values()),
@@ -831,8 +906,8 @@ export async function answerQuestion(params: {
         ruleIdsApplied: applied.ruleIdsApplied,
         surfacingIds,
         // The receipt affordance shows one surfacing; a gate-approved nudge takes
-        // precedence, otherwise a surfaced pattern (P5) rides the same channel.
-        nudge: wovenNudge ?? observationSurfacing,
+        // precedence, otherwise a surfaced onYourMind dossier rides the same channel.
+        nudge: wovenNudge ?? surfacedDossier,
       });
     };
 

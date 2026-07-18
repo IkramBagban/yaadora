@@ -1761,3 +1761,367 @@ export async function getGraphSnapshot(params: {
     })),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Follow-up threads & absence (spec 04). CODE decides what may NOT be raised
+// (dismissed-forever, statistical floors, the raised-unengaged-never-again rule
+// for absence); the model decides what IS raised from the dossiers assembled in
+// @repo/core/retrieval/follow-ups. All suppression is enforced HERE in SQL so a
+// blocked subject can never re-enter context. ALWAYS pass turn embeddings
+// through toVectorLiteral(vec)::vector for pgvector distance.
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-expire dated open loops whose check-in window has fully passed (spec 04
+ * §3.1): `due_at` older than `graceDays` (default 14, extended from 7d to give
+ * the "how did it go?" check-in a window) AND never engaged with — no
+ * non-suppressed `engaged` surfacing for the loop. Resolution (a later memory
+ * closing it) is unaffected; this only retires loops the user never engaged.
+ * Returns the number expired. Idempotent — safe to run every night.
+ */
+export async function expireStaleOpenLoops(
+  userId: string,
+  now: Date,
+  graceDays = 14,
+): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - graceDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const rows = await db.execute(sql`
+    UPDATE open_loops o
+    SET status = 'expired'
+    WHERE o.user_id = ${userId}
+      AND o.status = 'open'
+      AND o.due_at IS NOT NULL
+      AND o.due_at < ${cutoff}::timestamptz
+      AND NOT EXISTS (
+        SELECT 1 FROM surfacings s
+        WHERE s.user_id = ${userId}
+          AND s.subject_type = 'open_loop'
+          AND s.subject_id = o.id
+          AND s.suppressed_reason IS NULL
+          AND s.reaction = 'engaged'
+      )
+    RETURNING o.id
+  `);
+  return asRows(rows).length;
+}
+
+export interface FollowUpLoopRow {
+  id: string;
+  kind: string;
+  title: string;
+  dueAt: Date | null;
+  entityId: string | null;
+  sourceMemory: string;
+  createdAt: Date;
+  lastSurfacedAt: Date | null;
+  /** cosine distance from the turn embedding to the loop embedding; null when
+   * no turn embedding was supplied or the loop has none (lower = more relevant). */
+  distance: number | null;
+}
+
+/**
+ * Open loops eligible as follow-up (check-in) candidates for THIS turn
+ * (spec 04 §3.1/§3.3). Two ripeness gates, both computed here so the caller
+ * only ranks:
+ *  - DATED loops become candidates once `due_at` is past by `checkInGraceHours`
+ *    (default 2h) — the date passing is what flips "heads-up" into "how did it
+ *    go?". Still-future dated loops are P2's job, not ours, so they're excluded.
+ *  - UNDATED loops (threads, commitments, goals, conflicts) enter the pool once
+ *    they're at least `undatedMinAgeHours` old (default 24h).
+ * All open-loop kinds are eligible (an unresolved conflict is exactly the kind
+ * of thing a friend circles back to). Dismissed-ever subjects are excluded in
+ * SQL (NOT EXISTS) — dismissal is forever (spec 01 D5). `recentlyRaised` ranking
+ * is the caller's job; this query does NOT exclude recently-raised loops.
+ */
+export async function getFollowUpLoopCandidates(params: {
+  userId: string;
+  now: Date;
+  turnEmbedding?: number[] | null;
+  checkInGraceHours?: number;
+  undatedMinAgeHours?: number;
+  limit?: number;
+}): Promise<FollowUpLoopRow[]> {
+  const {
+    userId,
+    now,
+    turnEmbedding,
+    checkInGraceHours = 2,
+    undatedMinAgeHours = 24,
+    limit = 30,
+  } = params;
+  const checkInBefore = new Date(
+    now.getTime() - checkInGraceHours * 60 * 60 * 1000,
+  ).toISOString();
+  const undatedBefore = new Date(
+    now.getTime() - undatedMinAgeHours * 60 * 60 * 1000,
+  ).toISOString();
+  const distanceExpr =
+    turnEmbedding && turnEmbedding.length
+      ? sql`(o.embedding <=> ${toVectorLiteral(turnEmbedding)}::vector)`
+      : sql`NULL`;
+
+  const rows = await db.execute(sql`
+    SELECT o.id, o.kind, o.title, o.due_at, o.entity_id, o.source_memory,
+           o.created_at, o.last_surfaced_at,
+           ${distanceExpr} AS distance
+    FROM open_loops o
+    WHERE o.user_id = ${userId}
+      AND o.status = 'open'
+      AND (
+        (o.due_at IS NOT NULL AND o.due_at < ${checkInBefore}::timestamptz)
+        OR (o.due_at IS NULL AND o.created_at < ${undatedBefore}::timestamptz)
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM surfacings s
+        WHERE s.user_id = ${userId}
+          AND s.subject_type = 'open_loop'
+          AND s.subject_id = o.id
+          AND s.suppressed_reason IS NULL
+          AND s.reaction = 'dismissed'
+      )
+    ORDER BY distance ASC NULLS LAST, o.due_at ASC NULLS LAST, o.created_at DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    dueAt: r.due_at ? new Date(r.due_at as string) : null,
+    entityId: r.entity_id ? String(r.entity_id) : null,
+    sourceMemory: String(r.source_memory),
+    createdAt: new Date(r.created_at as string),
+    lastSurfacedAt: r.last_surfaced_at
+      ? new Date(r.last_surfaced_at as string)
+      : null,
+    distance: r.distance == null ? null : Number(r.distance),
+  }));
+}
+
+export interface AbsenceCandidateRow {
+  entityId: string;
+  name: string;
+  type: string;
+  lifetimeMentions: number;
+  lastMentionAt: Date | null;
+  monthsSinceLast: number;
+  dropRatio: number;
+}
+
+/** Statistical-significance floors for absence (spec 04 §3.6) — evidence
+ * strength, not human judgment (the legitimate kind of code threshold). */
+export const ABSENCE_MIN_LIFETIME_MENTIONS = 10;
+export const ABSENCE_MIN_MONTHS_SILENT = 6;
+export const ABSENCE_MIN_DROP_RATIO = 0.9;
+
+/**
+ * The absence numeric floors as ONE pure, unit-testable predicate (spec 04
+ * §3.6): ALL must hold — ≥10 lifetime mentions, silent > 6 months, mention rate
+ * dropped > 90%. Kept pure and in @repo/db so both `getAbsenceCandidates` (the
+ * runtime path applies it in JS) and the boundary tests (10-vs-9, 6-vs-5mo,
+ * 90-vs-89%) share ONE source of truth and can never drift. All comparisons are
+ * strict `>` for the rate/time floors — a signal exactly at the floor does not
+ * qualify (the conservative, silence-preferring direction).
+ */
+export function meetsAbsenceFloors(s: {
+  lifetimeMentions: number;
+  monthsSinceLast: number;
+  dropRatio: number;
+}): boolean {
+  return (
+    s.lifetimeMentions >= ABSENCE_MIN_LIFETIME_MENTIONS &&
+    s.monthsSinceLast > ABSENCE_MIN_MONTHS_SILENT &&
+    s.dropRatio > ABSENCE_MIN_DROP_RATIO
+  );
+}
+
+/**
+ * Per-entity absence candidates (spec 04 §3.6) — the last, weakest candidate
+ * source, computed at read time entirely from derived data + the ledger (no new
+ * source-of-truth; fully rebuildable, spec 01). Baselines come from
+ * `memory_entities` joined to `memories` over a trailing window, plus user
+ * conversation-turn mentions so an entity actively discussed in chat can never
+ * look "absent" (that's the highest-cost wrong guess in the product). An entity
+ * qualifies only when ALL floors hold:
+ *   - ≥ ABSENCE_MIN_LIFETIME_MENTIONS lifetime mentions;
+ *   - mention rate dropped > ABSENCE_MIN_DROP_RATIO (recent 6mo vs the prior 12mo);
+ *   - silent for > ABSENCE_MIN_MONTHS_SILENT months.
+ * Two hard suppressions, both in SQL: dismissed-ever (forever, spec 01 D5), and
+ * the kind-specific "raised-and-not-engaged NEVER re-enters unless the user
+ * mentions the entity again" rule (spec 04 §3.6) — enforced as: exclude when a
+ * non-suppressed `absence_nudge` exists with no memory/turn mention after it.
+ */
+export async function getAbsenceCandidates(params: {
+  userId: string;
+  now: Date;
+  limit?: number;
+}): Promise<AbsenceCandidateRow[]> {
+  const { userId, now, limit = 20 } = params;
+  const nowIso = now.getTime();
+  const sixMonthsAgo = new Date(nowIso - 182 * 24 * 60 * 60 * 1000).toISOString();
+  const eighteenMonthsAgo = new Date(
+    nowIso - 547 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const rows = await db.execute(sql`
+    WITH mem AS (
+      SELECT me.entity_id AS eid,
+             COALESCE(m.occurred_at, m.created_at) AS ts
+      FROM memory_entities me
+      JOIN memories m ON m.id = me.memory_id
+      WHERE m.user_id = ${userId}
+    ),
+    conv AS (
+      SELECT e.id AS eid, ct.created_at AS ts
+      FROM entities e
+      JOIN conversation_turns ct
+        ON ct.user_id = ${userId} AND ct.role = 'user'
+       AND ct.content ILIKE '%' || e.canonical_name || '%'
+      WHERE e.user_id = ${userId}
+    ),
+    allm AS (
+      SELECT eid, ts FROM mem
+      UNION ALL
+      SELECT eid, ts FROM conv
+    ),
+    stats AS (
+      SELECT e.id AS entity_id, e.canonical_name, e.type,
+        (SELECT COUNT(*) FROM mem WHERE mem.eid = e.id) AS lifetime,
+        (SELECT MAX(ts) FROM allm WHERE allm.eid = e.id) AS last_mention,
+        (SELECT COUNT(*) FROM allm
+           WHERE allm.eid = e.id AND allm.ts > ${sixMonthsAgo}::timestamptz) AS recent_count,
+        (SELECT COUNT(*) FROM mem
+           WHERE mem.eid = e.id
+             AND mem.ts > ${eighteenMonthsAgo}::timestamptz
+             AND mem.ts <= ${sixMonthsAgo}::timestamptz) AS baseline_count
+      FROM entities e
+      WHERE e.user_id = ${userId}
+        AND e.type IN ('person', 'org', 'project')
+    )
+    SELECT entity_id, canonical_name, type, lifetime, last_mention,
+      CASE
+        WHEN recent_count = 0 THEN 1.0
+        WHEN baseline_count = 0 THEN 0.0
+        ELSE 1.0 - ((recent_count / 6.0) / (baseline_count / 12.0))
+      END AS drop_ratio
+    FROM stats s
+    WHERE s.lifetime >= ${ABSENCE_MIN_LIFETIME_MENTIONS}
+      AND s.last_mention IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM surfacings d
+        WHERE d.user_id = ${userId}
+          AND d.subject_type = 'entity'
+          AND d.subject_id = s.entity_id
+          AND d.suppressed_reason IS NULL
+          AND d.reaction = 'dismissed'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM surfacings a
+        WHERE a.user_id = ${userId}
+          AND a.subject_type = 'entity'
+          AND a.subject_id = s.entity_id
+          AND a.kind = 'absence_nudge'
+          AND a.suppressed_reason IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM allm
+            WHERE allm.eid = s.entity_id AND allm.ts > a.shown_at
+          )
+      )
+    ORDER BY s.last_mention ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows)
+    .map((r) => {
+      const last = r.last_mention ? new Date(r.last_mention as string) : null;
+      const monthsSinceLast = last
+        ? (now.getTime() - last.getTime()) / (30 * 24 * 60 * 60 * 1000)
+        : Number.POSITIVE_INFINITY;
+      return {
+        entityId: String(r.entity_id),
+        name: String(r.canonical_name),
+        type: String(r.type),
+        lifetimeMentions: Number(r.lifetime),
+        lastMentionAt: last,
+        monthsSinceLast,
+        dropRatio: Number(r.drop_ratio),
+      };
+    })
+    // Numeric floors applied in JS via the shared pure predicate so the
+    // 10-vs-9 / 6-vs-5mo / 90-vs-89% boundaries have ONE source of truth.
+    .filter((r) => meetsAbsenceFloors(r));
+}
+
+export interface RaisingHistoryEntry {
+  subjectId: string;
+  shownAt: Date;
+  channel: string;
+  reaction: string | null;
+}
+
+/**
+ * Every prior NON-suppressed surfacing of the given subjects (spec 04 §3.3
+ * dossier `raisingHistory`): when, through which channel, and how the user
+ * reacted. Suppressed rows never count (they were never shown). `rule_applied`
+ * is excluded — it is not a proactive raise. Ordered newest-first per subject
+ * so the model can see "I already asked on Tuesday".
+ */
+export async function getRaisingHistoryForSubjects(
+  userId: string,
+  subjectIds: string[],
+): Promise<RaisingHistoryEntry[]> {
+  if (!subjectIds.length) return [];
+  const rows = await db.execute(sql`
+    SELECT subject_id, shown_at, channel, reaction
+    FROM surfacings
+    WHERE user_id = ${userId}
+      AND subject_id IN (${uuidInList(subjectIds)})
+      AND suppressed_reason IS NULL
+      AND kind <> 'rule_applied'
+    ORDER BY shown_at DESC
+  `);
+  return asRows(rows).map((r) => ({
+    subjectId: String(r.subject_id),
+    shownAt: new Date(r.shown_at as string),
+    channel: String(r.channel),
+    reaction: r.reaction == null ? null : String(r.reaction),
+  }));
+}
+
+export interface SinceThenMemory {
+  id: string;
+  occurredAt: Date | null;
+  snippet: string;
+}
+
+/**
+ * "What's happened since" for a follow-up dossier (spec 04 §3.3 `sinceThen`):
+ * later memories touching the same entity, captured AFTER `since`. Excludes the
+ * loop's own source memory. Newest-first, capped (default 6). Used to let the
+ * model see an already-told outcome and acknowledge rather than ask.
+ */
+export async function getSinceThenForEntity(params: {
+  userId: string;
+  entityId: string;
+  since: Date;
+  excludeMemoryId?: string | null;
+  limit?: number;
+}): Promise<SinceThenMemory[]> {
+  const { userId, entityId, since, excludeMemoryId = null, limit = 6 } = params;
+  const rows = await db.execute(sql`
+    SELECT m.id, COALESCE(m.occurred_at, m.created_at) AS ts, m.raw_text
+    FROM memory_entities me
+    JOIN memories m ON m.id = me.memory_id
+    WHERE me.entity_id = ${entityId}::uuid
+      AND m.user_id = ${userId}
+      AND COALESCE(m.occurred_at, m.created_at) > ${since.toISOString()}::timestamptz
+      ${excludeMemoryId ? sql`AND m.id <> ${excludeMemoryId}::uuid` : sql``}
+    ORDER BY ts DESC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map((r) => ({
+    id: String(r.id),
+    occurredAt: r.ts ? new Date(r.ts as string) : null,
+    snippet: String(r.raw_text).replace(/\s+/g, " ").slice(0, 200),
+  }));
+}

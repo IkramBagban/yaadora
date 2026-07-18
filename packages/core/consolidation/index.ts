@@ -19,6 +19,7 @@ import {
   getUserProfileFactTexts,
   getRecentConversationSummaries,
   upsertDigest,
+  expireStaleOpenLoops,
   type NewFact,
 } from "@repo/db";
 import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/models";
@@ -33,8 +34,15 @@ import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/mod
  *   4. salience rescoring   (§5.4)  → retrieval tie-breaker prior, never deletes
  *   5. entity_edges rebuild (§3.2)  → derived-of-derived, fully rebuildable
  *   6. digests              (§3.2)  → profile + 7-day week digest, ingestion tier
+ *   7. loop expiry     (spec 04 §3.1) → retire dated check-ins the user never
+ *                                       engaged, at dueAt+14d
  *
  * Everything here is orchestration + LLM; the raw SQL lives in @repo/db.
+ *
+ * Absence candidates (spec 04 §3.6) are NOT precomputed/stored here: they are
+ * derived at read time by `selectFollowUps` from `memory_entities` + the ledger
+ * (no new source-of-truth, fully rebuildable — spec 01). The statistical floors
+ * live in `getAbsenceCandidates`.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,6 +63,8 @@ export interface ConsolidationReport {
   edgesMaterialized: number;
   /** digests written this run: 0–2 (profile, week) (§3.2). */
   digestsBuilt: number;
+  /** open loops retired at dueAt+14d, never engaged (spec 04 §3.1). */
+  loopsExpired: number;
 }
 
 export async function runConsolidation(
@@ -75,6 +85,9 @@ export async function runConsolidation(
     // conversation summaries. Both run last so they see this run's updates.
     const edgesMaterialized = await materializeEntityEdges(userId);
     const digestsBuilt = await buildDigests(userId);
+    // Retire dated check-ins the user never engaged with (spec 04 §3.1). Runs
+    // last: it only reads `status`/`due_at` and the ledger, nothing above.
+    const loopsExpired = await expireStaleOpenLoops(userId, new Date());
     reports.push({
       userId,
       profilesRebuilt,
@@ -82,6 +95,7 @@ export async function runConsolidation(
       insightsWritten,
       edgesMaterialized,
       digestsBuilt,
+      loopsExpired,
     });
   }
   return reports;

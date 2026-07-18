@@ -92,6 +92,13 @@ export {
   PATTERN_MIN_CONFIDENCE,
   PATTERN_MAX_DISTANCE,
   PATTERN_RECENT_DAYS,
+  selectFollowUps,
+  scoreDossier,
+  loopRipeness,
+  absenceSummary,
+  FOLLOWUP_DOSSIER_CAP,
+  SINCE_THEN_CAP,
+  RECENTLY_RAISED_DAYS,
 } from "./retrieval";
 export type {
   AskHandle,
@@ -125,6 +132,14 @@ export type {
   EntityContextFact,
   EntityContextEdge,
   ObservationSlot,
+  OnYourMindDossier,
+  FollowUpDossier,
+  FollowUpSubjectType,
+  FollowUpDossierKind,
+  RankSignals,
+  SelectFollowUpsParams,
+  SinceThenItem,
+  RaisingHistoryItem,
 } from "./retrieval";
 
 // Proactive brain (spec 02 §5.4, §3.3, §6) — gates + awareness + push helpers.

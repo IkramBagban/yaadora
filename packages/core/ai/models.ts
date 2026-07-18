@@ -19,10 +19,11 @@ const log = createLogger("ai");
  * Three tiers:
  *  - ingestion: fast/cheap model (high-volume, runs on every memory)
  *  - reasoning: most capable model (Ask answer synthesis / decision mode)
- *  - fast: cheap/instant model for mechanical structured-output calls that run
- *    once or more PER ASK TURN (query understanding, rerank scoring). This tier
- *    MUST support json_schema structured outputs — that's why groq routes it to
- *    openai/gpt-oss-20b and NOT llama-3.1-8b-instant (which rejects json_schema).
+ *  - fast: structured-output calls that run once or more PER ASK TURN (query
+ *    understanding, rerank scoring, rule-match confirm, awareness). This tier
+ *    MUST support json_schema structured outputs. On groq it now runs the same
+ *    gpt-oss-120b as the other tiers (llama-3.1-8b-instant rejects json_schema
+ *    and the smaller gpt-oss-20b was dropped for quality, per founder 2026-07-18).
  *
  * API keys may be a single value OR a comma-separated list per provider, e.g.
  *   GROQ_API_KEY="key_1,key_2,key_3"
@@ -44,8 +45,11 @@ const MODEL_IDS: Record<"groq" | "google", Record<Tier, string>> = {
   groq: {
     ingestion: "openai/gpt-oss-120b",
     reasoning: "openai/gpt-oss-120b",
-    // gpt-oss-20b supports json_schema; llama-3.1-8b-instant does not.
-    fast: "openai/gpt-oss-20b",
+    // 120b everywhere (per founder, 2026-07-18): the fast tier also runs the
+    // larger model so structured-output judgment (rerank, query understanding,
+    // rule-match confirm, awareness) matches the reasoning tier. Both gpt-oss
+    // sizes support json_schema; 20b was only a cost optimization we've dropped.
+    fast: "openai/gpt-oss-120b",
   },
   google: {
     // Pro models are quota-limited (limit 0) in this environment, so every tier

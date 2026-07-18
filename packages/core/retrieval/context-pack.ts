@@ -10,9 +10,10 @@ import { getDigest, getDueOpenLoops } from "@repo/db";
  * awareness pass + gates) + entity context (P3, graph doorway pre-fetch).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
- *   rules > nudge > dated loops > entity context > observation > digest > profile
- * (spec 02 §4, extended in P3 — entity context sits after dated loops; P5 adds
- * the pattern observation just below it, the first slot dropped under pressure).
+ *   rules > nudge > dated loops > entity context > onYourMind > digest > profile
+ * (spec 02 §4, extended in P3 — entity context sits after dated loops; P5/spec
+ * 04 add the `onYourMind` section just below it, the first slot dropped under
+ * pressure).
  * "Priority" means the highest-priority slots are kept first; when
  * the budget runs out the lowest-priority slot is truncated, then dropped, then
  * the next one up, and so on.
@@ -69,19 +70,43 @@ export interface LoopLine {
 }
 
 /**
- * A pattern observation the agent MAY surface (spec 03 P5). Unlike a nudge, this
- * is not a forced directive — it rides in as low-priority context and the agent
- * decides, from relevance and the guidance in `renderObservation`, whether to
- * raise it at all. Already-dismissed / recently-surfaced patterns are filtered
- * out before they ever reach this slot (suppression stays code+state, enforced
- * in the query — spec 01 D5). `receipts` are the memory ids shown as sources; if
- * the agent surfaces it, it must call `note_observation(id)` so the ledger
- * records it (the only reliable signal a naturally-woven pattern was shown).
+ * A pattern observation selected by P5's `selectObservation` (spec 03 P5). This
+ * is the RAW pattern shape; it feeds into the generalized `onYourMind` section
+ * (spec 04 §3.4) as one dossier kind, unchanged. `receipts` are the memory ids
+ * shown as sources.
  */
 export interface ObservationSlot {
   id: string;
   text: string;
   receipts: string[];
+}
+
+/**
+ * One "on your mind" dossier (spec 04 §3.4) — a thing from the user's life the
+ * agent MAY touch on, or not. Generalizes P5's pattern observation into a single
+ * section carrying up to 3 dossiers of ANY kind: mined `pattern` insights (P5's
+ * selection feeds in unchanged), follow-up `followup` threads/loops, and
+ * `absence` candidates. Never a directive — it rides in as low-priority context
+ * and the agent decides, from the guidance in `renderOnYourMind` and the full
+ * raising history, whether to raise AT MOST ONE. Suppression stays code+state:
+ * dismissed / budget-blocked / toggle-excluded subjects are filtered out before
+ * they ever reach this slot (spec 01 D5). If the agent raises one it MUST call
+ * `note_surfaced(id)` so the ledger records it — the only reliable signal a
+ * naturally-woven follow-up was shown.
+ */
+export interface OnYourMindDossier {
+  /** pattern_fact | open_loop | entity — drives note_surfaced's ledger row. */
+  kind: "pattern" | "followup" | "absence";
+  /** subjectId: pattern_fact id | open_loop id | entity id. */
+  id: string;
+  summary: string;
+  receipts: string[];
+  /** Dated threads: when it was due (whether it has passed). */
+  dueAt?: Date | null;
+  /** "What's happened since" — later memories touching the same entity/topic. */
+  sinceThen?: Array<{ id: string; snippet: string }>;
+  /** Every prior non-suppressed raise of this subject, with the user's reaction. */
+  raisingHistory?: Array<{ shownAt: Date; channel: string; reaction: string | null }>;
 }
 
 /**
@@ -111,12 +136,15 @@ export interface ContextPackSlots {
    */
   entityContext?: EntityContextSlot | null;
   /**
-   * At most one relevant, high-support pattern the agent MAY surface (spec 03
-   * P5). Lowest proactive priority — the first slot dropped under budget
-   * pressure, because a pattern is never worth crowding out a rule, a due loop,
-   * or entity context. Null when nothing qualifies (the common case).
+   * Up to 3 "on your mind" dossiers the agent MAY touch on — mined patterns,
+   * follow-up threads, absence candidates (spec 04 §3.4). Lowest proactive
+   * priority: the first slot dropped under budget pressure, because a
+   * might-mention is never worth crowding out a rule, a due loop, or entity
+   * context. Empty/absent when nothing qualifies (the common case). A turn never
+   * carries both a gated nudge and this section — an approved nudge drops it at
+   * pack assembly (the single-proactive-moment invariant, spec 04 §3.4).
    */
-  observation?: ObservationSlot | null;
+  onYourMind?: OnYourMindDossier[];
 }
 
 export interface ContextPack extends ContextPackSlots {
@@ -172,16 +200,41 @@ function renderEntityContextSlot(slot: EntityContextSlot): string {
     slot.text,
   ].join("\n");
 }
-function renderObservation(o: ObservationSlot): string {
-  const refs = o.receipts.length ? ` Receipts: ${o.receipts.join(", ")}.` : "";
-  // Framing IS the guardrail (spec 03 P5, spec 01 anti-scenarios). A pattern is
-  // a claim ABOUT the user; wrong-and-confident destroys trust in one shot. So
-  // the agent surfaces it ONLY when it clearly fits, as an observation + a
-  // question, with receipts, and never as a verdict — otherwise stays silent.
+/**
+ * Render the `onYourMind` section (spec 04 §3.4). Framing IS the guardrail
+ * (spec 01 anti-scenarios): each dossier is a thing a friend MIGHT re-notice, so
+ * the guidance is history-first, silence-by-default, and at most one. The
+ * phrasing must be the agent's own, generated fresh — never a stored template.
+ */
+function renderOnYourMind(dossiers: OnYourMindDossier[]): string {
+  const lines = dossiers.map((d) => {
+    const parts: string[] = [d.summary];
+    if (d.dueAt) {
+      parts.push(`was due ${d.dueAt.toISOString().slice(0, 10)}`);
+    }
+    if (d.sinceThen && d.sinceThen.length) {
+      parts.push(
+        `what's happened since: ${d.sinceThen.map((s) => s.snippet).join(" | ")}`,
+      );
+    }
+    if (d.raisingHistory && d.raisingHistory.length) {
+      const hist = d.raisingHistory
+        .map(
+          (h) =>
+            `${h.shownAt.toISOString().slice(0, 10)} (${h.channel}, ${h.reaction ?? "no response yet"})`,
+        )
+        .join("; ");
+      parts.push(`you've raised this before — ${hist}`);
+    } else {
+      parts.push("never raised before");
+    }
+    if (d.receipts.length) parts.push(`receipts: ${d.receipts.join(", ")}`);
+    return `  - ${parts.join(" · ")} (id: ${d.id})`;
+  });
   return [
-    "One pattern from the user's own history you MAY raise — but only if it genuinely fits what they're discussing right now:",
-    `  ${o.text} (id: ${o.id}).${refs}`,
-    "If (and only if) it fits: state it plainly as something you noticed, show the receipts, and end with a question that hands control back to them (\"want to do anything about that?\") — never a verdict, diagnosis, or lecture. If it does not clearly fit this moment, say NOTHING about it. If you do raise it, you MUST also call note_observation with its id so it is recorded and never repeated.",
+    "Things from their life that might be worth touching on — or not:",
+    ...lines,
+    "At most ONE of these, and only where it genuinely fits this conversation — as a friend would: in your own words, brief, with warmth, never as a notification. Check the history FIRST: if you raised it before and they didn't engage, it almost always stays unraised. If they already told you the outcome (see what's happened since), don't ask — acknowledge it instead. On most turns the right choice is to raise NOTHING. If you do raise one, you MUST call note_surfaced with its id so it is recorded and not repeated.",
   ].join("\n");
 }
 
@@ -216,8 +269,8 @@ export function buildContextPackText(
       key: "entityContext",
       block: renderEntityContextSlot(slots.entityContext),
     });
-  if (slots.observation)
-    byPriority.push({ key: "observation", block: renderObservation(slots.observation) });
+  if (slots.onYourMind && slots.onYourMind.length)
+    byPriority.push({ key: "onYourMind", block: renderOnYourMind(slots.onYourMind) });
   if (slots.weekDigest) byPriority.push({ key: "weekDigest", block: renderDigest(slots.weekDigest) });
   if (slots.profile) byPriority.push({ key: "profile", block: renderProfile(slots.profile) });
 
@@ -247,7 +300,7 @@ export function buildContextPackText(
     "rules",
     "loops",
     "entityContext",
-    "observation",
+    "onYourMind",
     "nudge",
   ];
   const parts = [PACK_HEADER];

@@ -46,7 +46,29 @@ export type {
   NudgeDirective,
   EntityContextSlot,
   ObservationSlot,
+  OnYourMindDossier,
 } from "./context-pack";
+
+// Follow-up threads & absence (spec 04) — dossier assembly. Same philosophy as
+// P5: code decides what may NOT be raised, the model decides what IS raised.
+export {
+  selectFollowUps,
+  scoreDossier,
+  loopRipeness,
+  absenceSummary,
+  FOLLOWUP_DOSSIER_CAP,
+  SINCE_THEN_CAP,
+  RECENTLY_RAISED_DAYS,
+} from "./follow-ups";
+export type {
+  FollowUpDossier,
+  FollowUpSubjectType,
+  FollowUpDossierKind,
+  RankSignals,
+  SelectFollowUpsParams,
+  SinceThenItem,
+  RaisingHistoryItem,
+} from "./follow-ups";
 
 // Pattern surfacing (spec 03 P5) — at most one relevant, high-support,
 // non-dismissed pattern offered as context; the agent decides whether to raise
