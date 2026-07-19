@@ -1,7 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 import type { IngestionStatus } from '../api/types';
 import { relativeTime } from '../lib/time';
-import { space } from '../theme/tokens';
+import { hairlineWidth, radius, space } from '../theme/tokens';
 import { useTheme } from '../theme/useTheme';
 import { AppText } from './AppText';
 import { PressableScale } from './PressableScale';
@@ -27,11 +27,11 @@ function statusMeta(status: RowStatus, colors: ReturnType<typeof useTheme>['colo
     case 'failed':
       return { color: colors.danger, label: 'needs attention', pulsing: false };
     default:
-      return { color: colors.success, label: null, pulsing: false };
+      return { color: null, label: null, pulsing: false };
   }
 }
 
-/** One raw memory: the user's words in serif, metadata whispered underneath. */
+/** One raw memory as a soft card: the user's words, metadata whispered below. */
 export function MemoryRow({ text, timestamp, status, onPress, compact = false }: MemoryRowProps) {
   const { colors } = useTheme();
   const meta = statusMeta(status, colors);
@@ -41,33 +41,53 @@ export function MemoryRow({ text, timestamp, status, onPress, compact = false }:
       scaleTo={0.98}
       onPress={onPress}
       disabled={!onPress}
-      style={[styles.row, compact && styles.rowCompact]}
+      style={[
+        styles.card,
+        compact && styles.cardCompact,
+        { backgroundColor: colors.surface, borderColor: colors.hairline },
+      ]}
     >
-      <AppText variant="serifBody" numberOfLines={compact ? 1 : 2}>
+      <AppText variant="serifBody" numberOfLines={compact ? 2 : 3}>
         {text}
       </AppText>
       <View style={styles.meta}>
-        <StatusDot color={meta.color} pulsing={meta.pulsing} />
         <AppText variant="caption" tone="ink3">
           {relativeTime(timestamp)}
-          {meta.label ? `  ·  ${meta.label}` : ''}
         </AppText>
+        {meta.color && (
+          <View style={styles.metaStatus}>
+            <StatusDot color={meta.color} pulsing={meta.pulsing} size={5} />
+            {meta.label && (
+              <AppText variant="caption" tone="ink3">
+                {meta.label}
+              </AppText>
+            )}
+          </View>
+        )}
       </View>
     </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    paddingVertical: space.md,
-    gap: space.xs + 2,
+  card: {
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md + 2,
+    borderRadius: radius.md,
+    borderWidth: hairlineWidth,
   },
-  rowCompact: {
-    paddingVertical: space.sm + 2,
+  cardCompact: {
+    paddingVertical: space.md,
   },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm - 2,
+    justifyContent: 'space-between',
+  },
+  metaStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs + 2,
   },
 });

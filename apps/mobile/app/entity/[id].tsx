@@ -22,6 +22,8 @@ import type {
 } from '../../src/api/types';
 import { AppText } from '../../src/components/AppText';
 import { EmptyState } from '../../src/components/EmptyState';
+import { EntityGraph } from '../../src/components/EntityGraph';
+import { entityMeta } from '../../src/lib/entityType';
 import { ErrorState } from '../../src/components/ErrorState';
 import { ModalHeader } from '../../src/components/ModalHeader';
 import { PressableScale } from '../../src/components/PressableScale';
@@ -43,7 +45,7 @@ type LoadStatus = 'loading' | 'ready' | 'error';
  */
 export default function EntityScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { colors } = useTheme();
+  const { colors, dark } = useTheme();
   const insets = useSafeAreaInsets();
 
   const [data, setData] = useState<EntityContextPayload | null>(null);
@@ -134,9 +136,16 @@ export default function EntityScreen() {
             />
           }
         >
-          <AppText variant="micro" tone="ink3" style={styles.typeLabel}>
-            {data.entity.type}
-          </AppText>
+          <View style={styles.typeLabel}>
+            <Feather
+              name={entityMeta(data.entity.type).icon}
+              size={12}
+              color={entityMeta(data.entity.type).color(dark)}
+            />
+            <AppText variant="micro" tone="ink3">
+              {entityMeta(data.entity.type).label}
+            </AppText>
+          </View>
 
           {data.profile ? (
             <AppText variant="body" tone="ink" style={styles.profile}>
@@ -146,6 +155,19 @@ export default function EntityScreen() {
             <AppText variant="sub" tone="ink3" style={styles.profile}>
               No profile summary yet — it fills in as you capture more.
             </AppText>
+          )}
+
+          {data.edges.filter((e) => !flaggedEdgeIds.has(e.id)).length > 0 && (
+            <EntityGraph
+              focalId={data.entity.id}
+              focalName={data.entity.canonicalName}
+              focalType={data.entity.type}
+              edges={data.edges.filter((e) => !flaggedEdgeIds.has(e.id))}
+              onOpen={(entityId) => {
+                if (entityId === data.entity.id) return;
+                router.push({ pathname: '/entity/[id]', params: { id: entityId } });
+              }}
+            />
           )}
 
           {data.openLoops.length > 0 && (
@@ -521,7 +543,12 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   skeletons: { gap: space.md, paddingHorizontal: space.xxl, paddingTop: space.md },
   content: { paddingHorizontal: space.xxl, paddingTop: space.sm },
-  typeLabel: { textTransform: 'capitalize', marginBottom: space.sm },
+  typeLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs + 1,
+    marginBottom: space.sm,
+  },
   profile: { marginBottom: space.lg },
   section: { marginTop: space.lg, gap: space.md },
   sectionTitle: {},

@@ -23,9 +23,10 @@ import { enqueueMemory } from '../../src/capture/outbox';
 import { useOutbox } from '../../src/capture/useOutbox';
 import { useRecentMemories } from '../../src/capture/useRecentMemories';
 import { AppText } from '../../src/components/AppText';
+import { CaptureBento } from '../../src/components/CaptureBento';
 import { DebugErrorChip } from '../../src/components/DebugErrorChip';
-import { MemoryRow } from '../../src/components/MemoryRow';
 import { PressableScale } from '../../src/components/PressableScale';
+import { QuickChips } from '../../src/components/QuickChips';
 import { StatusPill } from '../../src/components/StatusPill';
 import { Toast } from '../../src/components/Toast';
 import { todayHeading } from '../../src/lib/time';
@@ -42,8 +43,8 @@ const PROMPTS = [
 
 const EDITOR_FONT = {
   fontFamily: fonts.sans,
-  fontSize: 22,
-  lineHeight: 32,
+  fontSize: 20,
+  lineHeight: 29,
   letterSpacing: -0.2,
 } as const;
 
@@ -151,6 +152,14 @@ export default function CaptureScreen() {
               </PressableScale>
               <PressableScale
                 accessibilityRole="button"
+                accessibilityLabel="Your world"
+                onPress={() => router.push('/entities' as Href)}
+                hitSlop={12}
+              >
+                <Feather name="share-2" size={18} color={colors.ink2} />
+              </PressableScale>
+              <PressableScale
+                accessibilityRole="button"
                 accessibilityLabel="Account"
                 onPress={() => router.push('/profile' as Href)}
                 hitSlop={12}
@@ -192,39 +201,19 @@ export default function CaptureScreen() {
             />
           </Animated.View>
 
-          {showRecent && recent.length > 0 && (
+          {showRecent && (
             <Animated.View
               entering={FadeIn.duration(durations.enter)}
               exiting={FadeOut.duration(durations.quick)}
-              style={styles.recent}
+              style={styles.below}
             >
-              <View style={styles.recentHeader}>
-                <AppText variant="micro" tone="ink3">
-                  Recent
-                </AppText>
-                <PressableScale
-                  onPress={() => router.push('/timeline')}
-                  hitSlop={10}
-                >
-                  <AppText variant="captionMedium" tone="accent">
-                    View all →
-                  </AppText>
-                </PressableScale>
-              </View>
-              {recent.map((row) => (
-                <MemoryRow
-                  key={row.key}
-                  compact
-                  text={row.text}
-                  timestamp={row.timestamp}
-                  status={row.status}
-                  onPress={
-                    row.id
-                      ? () => router.push({ pathname: '/memory/[id]', params: { id: row.id! } })
-                      : undefined
-                  }
-                />
-              ))}
+              <QuickChips
+                onPick={(prefix) => {
+                  setText(prefix);
+                  inputRef.current?.focus();
+                }}
+              />
+              <CaptureBento recent={recent} />
             </Animated.View>
           )}
 
@@ -325,6 +314,9 @@ const styles = StyleSheet.create({
   },
   editor: {
     flex: 1,
+    // The editor always keeps writing room; the shelf below is hard-capped
+    // (two bento rows max) so the two can never fight over the screen.
+    minHeight: 120,
     paddingTop: space.xxl,
   },
   placeholder: {
@@ -339,13 +331,8 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     textAlignVertical: 'top',
   },
-  recent: {
-    paddingBottom: space.sm,
-  },
-  recentHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  below: {
+    gap: space.md,
     paddingBottom: space.xs,
   },
   saveRow: {

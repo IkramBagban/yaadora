@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, View } from 'react-native';
-import { router } from 'expo-router';
+import Feather from '@expo/vector-icons/Feather';
+import { useState } from 'react';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import type { Exchange } from '../ask/useAskSession';
 import { durations } from '../theme/motion';
@@ -7,12 +8,12 @@ import { hairlineWidth, radius, space } from '../theme/tokens';
 import { useTheme } from '../theme/useTheme';
 import { AppText } from './AppText';
 import { Caret } from './Caret';
-import { CitationChip } from './CitationChip';
 import { ErrorState } from './ErrorState';
 import { NudgeReceipt } from './NudgeReceipt';
 import { PressableScale } from './PressableScale';
 import { ReminderChip } from './ReminderChip';
 import { SuggestionChip } from './SuggestionChip';
+import { SourcesSheet } from './SourcesSheet';
 import { ToolTrace } from './ToolTrace';
 
 interface AskExchangeProps {
@@ -47,6 +48,7 @@ export function AskExchange({
   const clarify = exchange.mode === 'clarify';
   const settled = exchange.status === 'done';
   const bodyTone = dim ? 'ink3' : 'ink';
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   // What kind of answer is this? Derived so each turn reads distinctly:
   //  - grounded     → the reply cites the user's own memories
@@ -101,7 +103,6 @@ export function AskExchange({
         {clarify && exchange.text.length > 0 && (
           <KindLabel entering text="A quick question" tone="accent" />
         )}
-        {!clarify && grounded && <KindLabel text="From your memory" tone="accent" />}
         {foundNothing && <KindLabel text="Not in your memory" tone="ink3" />}
 
         {errored && !exchange.text ? (
@@ -158,27 +159,26 @@ export function AskExchange({
           )}
 
           {exchange.citations.length > 0 && (
-            <View style={styles.sources}>
-              <AppText variant="micro" tone="ink3">
-                Sources
+            <PressableScale
+              accessibilityRole="button"
+              accessibilityLabel={`Show ${exchange.citations.length} source${exchange.citations.length === 1 ? '' : 's'}`}
+              onPress={() => setSourcesOpen(true)}
+              style={[styles.sourcesButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.hairline }]}
+            >
+              <Feather name="book-open" size={14} color={colors.ink2} />
+              <AppText variant="captionMedium" tone="ink2">
+                {exchange.citations.length} source{exchange.citations.length === 1 ? '' : 's'}
               </AppText>
-              {exchange.citations.map((citation, i) => (
-                <CitationChip
-                  key={`${citation.memoryId}-${i}`}
-                  citation={citation}
-                  index={i}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/memory/[id]',
-                      params: { id: citation.memoryId },
-                    })
-                  }
-                />
-              ))}
-            </View>
+              <Feather name="chevron-up" size={14} color={colors.ink3} />
+            </PressableScale>
           )}
         </View>
       )}
+      <SourcesSheet
+        citations={exchange.citations}
+        visible={sourcesOpen}
+        onClose={() => setSourcesOpen(false)}
+      />
     </Animated.View>
   );
 }
@@ -242,7 +242,14 @@ const styles = StyleSheet.create({
   quickReplies: {
     gap: space.sm + 2,
   },
-  sources: {
-    gap: space.sm,
+  sourcesButton: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs + 2,
+    minHeight: 34,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: hairlineWidth,
   },
 });

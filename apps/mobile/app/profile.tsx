@@ -163,14 +163,14 @@ export default function ProfileScreen() {
             </PressableScale>
             <PressableScale
               accessibilityRole="button"
-              accessibilityLabel="People and projects"
+              accessibilityLabel="Your world"
               onPress={() => router.push('/entities' as Href)}
             >
               <Row
                 divider
-                icon={<Feather name="users" size={18} color={colors.ink2} />}
-                label="People & projects"
-                value="Profiles, open threads, and connections"
+                icon={<Feather name="share-2" size={18} color={colors.ink2} />}
+                label="Your world"
+                value="People, places, projects, topics & moments"
                 chevron
               />
             </PressableScale>

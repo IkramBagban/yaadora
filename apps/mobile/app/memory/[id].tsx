@@ -2,145 +2,168 @@ import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import Feather from '@expo/vector-icons/Feather';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  FadeIn,
+  SlideInLeft,
+  SlideInRight,
+  runOnJS,
+} from 'react-native-reanimated';
 import { api } from '../../src/api/client';
 import type { MemoryDetail } from '../../src/api/types';
 import { AppText } from '../../src/components/AppText';
 import { ErrorState } from '../../src/components/ErrorState';
 import { ModalHeader } from '../../src/components/ModalHeader';
+import { PressableScale } from '../../src/components/PressableScale';
 import { Skeleton } from '../../src/components/Skeleton';
-import { StatusDot } from '../../src/components/StatusDot';
+import { getMemoryNeighbors } from '../../src/lib/memoryNav';
 import { formatDateLong } from '../../src/lib/time';
 import { durations } from '../../src/theme/motion';
-import { fonts, hairlineWidth, radius, space } from '../../src/theme/tokens';
+import { fonts, space } from '../../src/theme/tokens';
 import { useTheme } from '../../src/theme/useTheme';
 
 type LoadStatus = 'loading' | 'ready' | 'error';
+type Direction = 'newer' | 'older' | null;
+
+const SWIPE_COMMIT = 64;
 
 /**
- * A single raw memory — the immutable ground truth, presented like a
- * manuscript page — with whatever the system has derived from it underneath.
+ * A single record — only the user's own words and when they wrote them.
+ * Nothing the pipeline derived (facts, entities) appears here; this page is
+ * the immutable thing they saved. Swipe left/right (or use the pager) to walk
+ * the records without going back to the list.
  */
 export default function MemoryDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: paramId } = useLocalSearchParams<{ id: string }>();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
+  const [currentId, setCurrentId] = useState(paramId);
+  const [direction, setDirection] = useState<Direction>(null);
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');
 
+  useEffect(() => setCurrentId(paramId), [paramId]);
+
   const load = useCallback(async () => {
-    if (!id) return;
+    if (!currentId) return;
     setStatus('loading');
     try {
-      setDetail(await api.getMemory(id));
+      setDetail(await api.getMemory(currentId));
       setStatus('ready');
     } catch {
       setStatus('error');
     }
-  }, [id]);
+  }, [currentId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const neighbors = currentId ? getMemoryNeighbors(currentId) : null;
+
+  const go = useCallback(
+    (dir: 'newer' | 'older') => {
+      const target = dir === 'newer' ? neighbors?.prevId : neighbors?.nextId;
+      if (!target) return;
+      void Haptics.selectionAsync();
+      setDirection(dir);
+      setCurrentId(target);
+    },
+    [neighbors],
+  );
+
+  const pan = Gesture.Pan()
+    .activeOffsetX([-18, 18])
+    .failOffsetY([-14, 14])
+    .onEnd((e) => {
+      if (e.translationX < -SWIPE_COMMIT) runOnJS(go)('older');
+      else if (e.translationX > SWIPE_COMMIT) runOnJS(go)('newer');
+    });
+
+  // Older records slide in from the right (moving down the timeline); newer
+  // ones from the left. First open just fades.
+  const entering =
+    direction === 'older'
+      ? SlideInRight.springify().damping(22).stiffness(240)
+      : direction === 'newer'
+        ? SlideInLeft.springify().damping(22).stiffness(240)
+        : FadeIn.duration(durations.enter);
+
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
       <View style={{ height: Math.max(insets.top - space.xxl, 0) }} />
-      <ModalHeader title="Memory" />
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: insets.bottom + space.xxxl },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {status === 'loading' && (
-          <View style={styles.skeletons}>
-            <Skeleton width="92%" height={22} />
-            <Skeleton width="78%" height={22} />
-            <Skeleton width="60%" height={22} />
-            <Skeleton width={140} height={12} style={styles.skeletonMeta} />
-          </View>
-        )}
+      <ModalHeader title="Record" />
 
-        {status === 'error' && (
-          <ErrorState
-            title="Can't open this memory"
-            caption="The original is safe — try again in a moment."
-            onRetry={() => void load()}
-          />
-        )}
+      <GestureDetector gesture={pan}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: insets.bottom + space.huge },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          {status === 'loading' && (
+            <View style={styles.skeletons}>
+              <Skeleton width="92%" height={22} />
+              <Skeleton width="78%" height={22} />
+              <Skeleton width="60%" height={22} />
+              <Skeleton width={140} height={12} style={styles.skeletonMeta} />
+            </View>
+          )}
 
-        {status === 'ready' && detail && (
-          <Animated.View entering={FadeIn.duration(durations.enter)} style={styles.body}>
-            <AppText style={[styles.rawText, { color: colors.ink }]}>
-              {detail.memory.rawText}
-            </AppText>
+          {status === 'error' && (
+            <ErrorState
+              title="Can't open this record"
+              caption="The original is safe — try again in a moment."
+              onRetry={() => void load()}
+            />
+          )}
 
-            <AppText variant="caption" tone="ink3">
-              {formatDateLong(detail.memory.occurredAt ?? detail.memory.createdAt)}
-              {`  ·  ${detail.memory.source}`}
-            </AppText>
+          {status === 'ready' && detail && (
+            <Animated.View key={detail.memory.id} entering={entering} style={styles.body}>
+              <AppText style={[styles.rawText, { color: colors.ink }]}>
+                {detail.memory.rawText}
+              </AppText>
 
-            {detail.memory.status === 'pending' && (
-              <View style={styles.processing}>
-                <StatusDot color={colors.pending} pulsing />
-                <AppText variant="caption" tone="ink3">
-                  Processing — understanding will appear here.
-                </AppText>
-              </View>
-            )}
+              <AppText variant="caption" tone="ink3">
+                {formatDateLong(detail.memory.occurredAt ?? detail.memory.createdAt)}
+              </AppText>
+            </Animated.View>
+          )}
+        </ScrollView>
+      </GestureDetector>
 
-            {detail.facts.length > 0 && (
-              <View style={styles.section}>
-                <AppText variant="micro" tone="ink3">
-                  What I understood
-                </AppText>
-                {detail.facts.map((fact) => (
-                  <View key={fact.id} style={styles.factRow}>
-                    <View style={styles.factDot}>
-                      <StatusDot
-                        color={colors.success}
-                        size={5}
-                      />
-                    </View>
-                    <AppText variant="sub" tone="ink2" style={styles.factText}>
-                      {fact.factText}
-                    </AppText>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            {detail.entities.length > 0 && (
-              <View style={styles.section}>
-                <AppText variant="micro" tone="ink3">
-                  Mentions
-                </AppText>
-                <View style={styles.entities}>
-                  {detail.entities.map((entity) => (
-                    <View
-                      key={entity.id}
-                      style={[
-                        styles.entityPill,
-                        { backgroundColor: colors.surfaceAlt, borderColor: colors.hairline },
-                      ]}
-                    >
-                      <AppText variant="captionMedium" tone="ink">
-                        {entity.canonicalName}
-                      </AppText>
-                      <AppText variant="caption" tone="ink3">
-                        {entity.type}
-                      </AppText>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            )}
-          </Animated.View>
-        )}
-      </ScrollView>
+      {neighbors && neighbors.total > 1 && (
+        <Animated.View
+          entering={FadeIn.delay(200).duration(durations.fade)}
+          style={[styles.pager, { paddingBottom: insets.bottom + space.lg }]}
+        >
+          <PressableScale
+            disabled={!neighbors.prevId}
+            onPress={() => go('newer')}
+            hitSlop={10}
+            style={[styles.pagerChev, !neighbors.prevId && styles.pagerDisabled]}
+            accessibilityLabel="Newer record"
+          >
+            <Feather name="chevron-left" size={18} color={colors.ink2} />
+          </PressableScale>
+          <AppText variant="caption" tone="ink3">
+            {neighbors.index + 1} of {neighbors.total}
+          </AppText>
+          <PressableScale
+            disabled={!neighbors.nextId}
+            onPress={() => go('older')}
+            hitSlop={10}
+            style={[styles.pagerChev, !neighbors.nextId && styles.pagerDisabled]}
+            accessibilityLabel="Older record"
+          >
+            <Feather name="chevron-right" size={18} color={colors.ink2} />
+          </PressableScale>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -151,7 +174,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: space.xxl,
-    paddingTop: space.md,
+    paddingTop: space.lg,
   },
   skeletons: {
     gap: space.md,
@@ -165,41 +188,24 @@ const styles = StyleSheet.create({
   },
   rawText: {
     fontFamily: fonts.sans,
-    fontSize: 22,
-    lineHeight: 32,
+    fontSize: 20,
+    lineHeight: 30,
     letterSpacing: -0.2,
   },
-  processing: {
+  pager: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
+    justifyContent: 'center',
+    gap: space.xl,
   },
-  section: {
-    gap: space.md,
-    marginTop: space.md,
+  pagerChev: {
+    padding: space.sm,
   },
-  factRow: {
-    flexDirection: 'row',
-    gap: space.md,
-  },
-  factDot: {
-    paddingTop: 8,
-  },
-  factText: {
-    flexShrink: 1,
-  },
-  entities: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space.sm,
-  },
-  entityPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm - 2,
-    paddingHorizontal: space.md,
-    height: 32,
-    borderRadius: radius.pill,
-    borderWidth: hairlineWidth,
+  pagerDisabled: {
+    opacity: 0.25,
   },
 });

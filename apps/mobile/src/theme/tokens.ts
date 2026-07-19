@@ -56,10 +56,11 @@ export const palettes: Record<'light' | 'dark', Palette> = {
 };
 
 export const fonts = {
-  sans: 'Geist_400Regular',
-  sansItalic: 'Geist_400Regular_Italic',
-  sansMedium: 'Geist_500Medium',
-  sansSemibold: 'Geist_600SemiBold',
+  sans: 'InstrumentSans_400Regular',
+  sansItalic: 'InstrumentSans_400Regular_Italic',
+  sansMedium: 'InstrumentSans_500Medium',
+  sansSemibold: 'InstrumentSans_600SemiBold',
+  sansBold: 'InstrumentSans_700Bold',
 } as const;
 
 export const space = {
@@ -85,23 +86,28 @@ export const hairlineWidth = StyleSheet.hairlineWidth;
 
 export const typeScale: Record<string, TextStyle> = {
   display: {
-    fontFamily: fonts.sansSemibold,
-    fontSize: 28,
-    lineHeight: 36,
-    letterSpacing: -0.5,
+    fontFamily: fonts.sansBold,
+    fontSize: 26,
+    lineHeight: 32,
+    letterSpacing: -0.6,
   },
   title: {
     fontFamily: fonts.sansSemibold,
-    fontSize: 20,
-    lineHeight: 27,
+    fontSize: 19,
+    lineHeight: 25,
     letterSpacing: -0.3,
   },
-  /** Larger reading size for the user's own words (memories, questions). */
-  serifBody: { fontFamily: fonts.sans, fontSize: 18, lineHeight: 27 },
-  body: { fontFamily: fonts.sans, fontSize: 16, lineHeight: 25 },
-  sub: { fontFamily: fonts.sans, fontSize: 15, lineHeight: 22 },
-  caption: { fontFamily: fonts.sans, fontSize: 13, lineHeight: 18 },
-  captionMedium: { fontFamily: fonts.sansMedium, fontSize: 13, lineHeight: 18 },
+  /** Reading size for the user's own words (memories, questions). */
+  serifBody: {
+    fontFamily: fonts.sans,
+    fontSize: 16,
+    lineHeight: 24,
+    letterSpacing: -0.1,
+  },
+  body: { fontFamily: fonts.sans, fontSize: 15, lineHeight: 22 },
+  sub: { fontFamily: fonts.sans, fontSize: 14, lineHeight: 20 },
+  caption: { fontFamily: fonts.sans, fontSize: 12.5, lineHeight: 17 },
+  captionMedium: { fontFamily: fonts.sansMedium, fontSize: 12.5, lineHeight: 17 },
   micro: {
     fontFamily: fonts.sansMedium,
     fontSize: 11,

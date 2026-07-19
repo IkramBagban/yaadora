@@ -2,17 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { api } from '../src/api/client';
 import type { Memory } from '../src/api/types';
 import { useOutbox } from '../src/capture/useOutbox';
 import { AppText } from '../src/components/AppText';
 import { EmptyState } from '../src/components/EmptyState';
 import { ErrorState } from '../src/components/ErrorState';
+import { MemoryCalendar } from '../src/components/MemoryCalendar';
 import { MemoryRow, type RowStatus } from '../src/components/MemoryRow';
 import { ModalHeader } from '../src/components/ModalHeader';
 import { PressableScale } from '../src/components/PressableScale';
+import { SegmentedControl, type Segment } from '../src/components/SegmentedControl';
 import { Skeleton } from '../src/components/Skeleton';
 import { dayLabel } from '../src/lib/time';
+import { setMemorySequence } from '../src/lib/memoryNav';
+import { durations } from '../src/theme/motion';
 import { space } from '../src/theme/tokens';
 import { useTheme } from '../src/theme/useTheme';
 
@@ -31,13 +36,23 @@ type Row =
     };
 
 type LoadStatus = 'loading' | 'ready' | 'error';
+type ViewKey = 'list' | 'calendar';
 
-/** Timeline — the raw episodic log, newest first. Local unsynced items pinned on top. */
+const SEGMENTS: Segment<ViewKey>[] = [
+  { key: 'list', label: 'List', icon: 'list' },
+  { key: 'calendar', label: 'Calendar', icon: 'calendar' },
+];
+
+/**
+ * Memories hub — every record you've kept, two ways in. List: newest-first.
+ * Calendar: jump to any specific day. Both show only what you added.
+ */
 export default function TimelineScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { items: outboxItems } = useOutbox();
 
+  const [view, setView] = useState<ViewKey>('list');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');
@@ -61,6 +76,11 @@ export default function TimelineScreen() {
   useEffect(() => {
     void loadFirstPage();
   }, [loadFirstPage]);
+
+  // Publish the browsing order so the detail screen can swipe prev/next.
+  useEffect(() => {
+    setMemorySequence(memories.map((m) => m.id));
+  }, [memories]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore.current) return;
@@ -117,6 +137,10 @@ export default function TimelineScreen() {
     return built;
   }, [outboxItems, memories, status]);
 
+  const openMemory = useCallback((id: string) => {
+    router.push({ pathname: '/memory/[id]', params: { id } });
+  }, []);
+
   const renderRow = ({ item }: { item: Row }) => {
     if (item.kind === 'label') {
       return (
@@ -142,16 +166,14 @@ export default function TimelineScreen() {
       );
     }
     return (
-      <MemoryRow
-        text={item.text}
-        timestamp={item.timestamp}
-        status={item.status}
-        onPress={
-          item.id
-            ? () => router.push({ pathname: '/memory/[id]', params: { id: item.id! } })
-            : undefined
-        }
-      />
+      <View style={styles.memoryWrap}>
+        <MemoryRow
+          text={item.text}
+          timestamp={item.timestamp}
+          status={item.status}
+          onPress={item.id ? () => openMemory(item.id!) : undefined}
+        />
+      </View>
     );
   };
 
@@ -185,26 +207,46 @@ export default function TimelineScreen() {
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
       <View style={{ height: Math.max(insets.top - space.xxl, 0) }} />
       <ModalHeader title="Memories" />
-      <FlatList
-        data={rows}
-        keyExtractor={(row) => row.key}
-        renderItem={renderRow}
-        contentContainerStyle={[
-          styles.listContent,
-          { paddingBottom: insets.bottom + space.xxl },
-        ]}
-        onEndReached={() => void loadMore()}
-        onEndReachedThreshold={0.4}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void loadFirstPage(true)}
-            tintColor={colors.ink3}
+
+      <View style={styles.segmentWrap}>
+        <SegmentedControl segments={SEGMENTS} value={view} onChange={setView} />
+      </View>
+
+      {view === 'list' && (
+        <Animated.View entering={FadeIn.duration(durations.fade)} style={styles.screen}>
+          <FlatList
+            data={rows}
+            keyExtractor={(row) => row.key}
+            renderItem={renderRow}
+            contentContainerStyle={[
+              styles.listContent,
+              { paddingBottom: insets.bottom + space.xxl },
+            ]}
+            onEndReached={() => void loadMore()}
+            onEndReachedThreshold={0.4}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => void loadFirstPage(true)}
+                tintColor={colors.ink3}
+              />
+            }
+            ListEmptyComponent={listEmpty}
+            showsVerticalScrollIndicator={false}
           />
-        }
-        ListEmptyComponent={listEmpty}
-        showsVerticalScrollIndicator={false}
-      />
+        </Animated.View>
+      )}
+
+      {view === 'calendar' && (
+        <Animated.View entering={FadeIn.duration(durations.fade)} style={[styles.screen, styles.listContent]}>
+          <MemoryCalendar
+            memories={memories}
+            hasMore={Boolean(nextCursor)}
+            onNeedOlder={() => void loadMore()}
+            onOpenMemory={openMemory}
+          />
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -213,12 +255,19 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
   },
+  segmentWrap: {
+    paddingHorizontal: space.xxl,
+    paddingBottom: space.md,
+  },
   listContent: {
     paddingHorizontal: space.xxl,
   },
   label: {
     paddingTop: space.xl,
-    paddingBottom: space.xs,
+    paddingBottom: space.sm,
+  },
+  memoryWrap: {
+    paddingBottom: space.sm,
   },
   banner: {
     flexDirection: 'row',
