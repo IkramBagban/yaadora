@@ -22,7 +22,7 @@ export const QueryUnderstandingSchema = z.object({
   entities: z.array(
     z.object({
       surface: z.string(),
-      type: z.enum(["person", "place", "org", "topic", "project"]),
+      type: z.enum(["person", "place", "org", "topic", "project", "event"]),
     }),
   ),
   // Absolute ISO window resolved against the current date + user tz, or null.
@@ -57,7 +57,7 @@ Given the user's question, classify it and extract hard retrieval filters.
 - queryType: episodic (a specific event) | entity (about a person/place/thing) |
   factual (a specific fact) | temporal (bounded by time) | decision (asking for
   help weighing a choice).
-- entities: every person/place/org/topic/project the question refers to.
+- entities: every person/place/org/topic/project/event the question refers to.
 - timeRange: if the question is time-bounded, resolve it to an ABSOLUTE ISO 8601
   window [from, to] using the provided current date and timezone
   ("last March" -> that month's first/last instant). Otherwise null.

@@ -22,7 +22,7 @@ export const ExtractionSchema = z.object({
   entities: z.array(
     z.object({
       surface: z.string(), // as written ("Urhan")
-      type: z.enum(["person", "place", "org", "topic", "project"]),
+      type: z.enum(["person", "place", "org", "topic", "project", "event"]),
       canonicalGuess: z.string(), // normalized ("Urhan")
     }),
   ),
@@ -84,8 +84,13 @@ Rules:
   occurredAt = when the event happened (may differ from when it was written). If the
   memory has no discernible event time, set occurredAt to null.
 - CLASSIFY: types[] describes what kind of memory this is (at least one).
-- ENTITIES: extract every distinct person / place / org / topic / project mentioned.
+- ENTITIES: extract every distinct person / place / org / topic / project / event mentioned.
   surface = as written; canonicalGuess = a normalized canonical name.
+  An EVENT is a bounded happening the user lives through or plans — a trip, a
+  meeting, an appointment, a milestone, a hard conversation ("the Tokyo trip",
+  "Yusuf's discharge", "the investor pitch"). Prefer "event" over "topic" when
+  the thing has a time or an occurrence; use "topic" for concepts, subjects, and
+  ideas with no occurrence.
 - FACTS: decompose into the SMALLEST independently-true atomic statements. Each fact
   has subject (an entity surface, or "user" for the author), predicate, object, and a
   natural-language factText. A pure reflection may yield ZERO facts — that is fine.

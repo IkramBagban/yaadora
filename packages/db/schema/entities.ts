@@ -23,7 +23,7 @@ export const entities = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
-    type: text("type").notNull(), // person | place | org | topic | project
+    type: text("type").notNull(), // person | place | org | topic | project | event
     canonicalName: text("canonical_name").notNull(),
     aliases: text("aliases")
       .array()
