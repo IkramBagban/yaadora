@@ -7,12 +7,10 @@ type Tone = keyof Palette;
 interface AppTextProps extends TextProps {
   variant?: TypeVariant;
   tone?: Tone;
-  /** Italic is only available for serif variants (Instrument Serif ships an italic). */
+  /** Italic renders in the regular-weight italic cut (loaded for Geist 400). */
   italic?: boolean;
   align?: TextStyle['textAlign'];
 }
-
-const SERIF_VARIANTS: TypeVariant[] = ['display', 'title', 'serifBody'];
 
 export function AppText({
   variant = 'body',
@@ -25,7 +23,7 @@ export function AppText({
   const { colors } = useTheme();
   const base = typeScale[variant];
   const fontFamily =
-    italic && SERIF_VARIANTS.includes(variant) ? fonts.serifItalic : base?.fontFamily;
+    italic && base?.fontFamily === fonts.sans ? fonts.sansItalic : base?.fontFamily;
 
   return (
     <Text

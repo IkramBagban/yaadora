@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
     marginLeft: -space.xs,
   },
   brand: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.sansSemibold,
     marginBottom: space.xs,
   },
   subtitle: {

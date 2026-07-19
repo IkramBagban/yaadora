@@ -41,9 +41,10 @@ const PROMPTS = [
 ];
 
 const EDITOR_FONT = {
-  fontFamily: fonts.serif,
-  fontSize: 24,
-  lineHeight: 34,
+  fontFamily: fonts.sans,
+  fontSize: 22,
+  lineHeight: 32,
+  letterSpacing: -0.2,
 } as const;
 
 /** Tab-bar clearance so content never hides behind the floating pill. */
@@ -173,12 +174,7 @@ export default function CaptureScreen() {
                 exiting={FadeOut.duration(durations.quick)}
                 style={styles.placeholder}
               >
-                <AppText
-                  style={[
-                    EDITOR_FONT,
-                    { fontFamily: fonts.serifItalic, color: colors.ink3 },
-                  ]}
-                >
+                <AppText style={[EDITOR_FONT, { color: colors.ink3 }]}>
                   {placeholder}
                 </AppText>
               </Animated.View>

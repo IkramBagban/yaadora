@@ -164,9 +164,10 @@ const styles = StyleSheet.create({
     gap: space.lg,
   },
   rawText: {
-    fontFamily: fonts.serif,
-    fontSize: 26,
-    lineHeight: 38,
+    fontFamily: fonts.sans,
+    fontSize: 22,
+    lineHeight: 32,
+    letterSpacing: -0.2,
   },
   processing: {
     flexDirection: 'row',

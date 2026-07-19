@@ -240,7 +240,7 @@ export default function AskScreen() {
                 cursorColor={colors.accent}
                 returnKeyType="send"
                 onSubmitEditing={() => submit()}
-                style={[styles.inputText, typeScale.sub, { color: colors.ink }]}
+                style={[styles.inputText, typeScale.body, { color: colors.ink }]}
                 accessibilityLabel="Your question"
               />
               {streaming ? (

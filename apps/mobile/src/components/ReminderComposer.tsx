@@ -514,7 +514,7 @@ const styles = StyleSheet.create({
     marginBottom: space.sm,
   },
   input: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.sans,
     fontSize: 22,
     lineHeight: 30,
     minHeight: 60,

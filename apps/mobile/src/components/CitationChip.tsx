@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   quote: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.sans,
     fontSize: 20,
     lineHeight: 22,
   },

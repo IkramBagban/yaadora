@@ -2,8 +2,8 @@ import { StyleSheet, type TextStyle } from 'react-native';
 
 /**
  * Design tokens — "ink & paper".
- * Warm neutrals, a single sienna accent, serif for the user's words,
- * sans for the interface. Both palettes share the same shape.
+ * Warm neutrals, a single sienna accent, Geist for everything — weight and
+ * size carry the hierarchy. Both palettes share the same shape.
  */
 
 export interface Palette {
@@ -56,11 +56,10 @@ export const palettes: Record<'light' | 'dark', Palette> = {
 };
 
 export const fonts = {
-  serif: 'InstrumentSerif_400Regular',
-  serifItalic: 'InstrumentSerif_400Regular_Italic',
-  sans: 'Inter_400Regular',
-  sansMedium: 'Inter_500Medium',
-  sansSemibold: 'Inter_600SemiBold',
+  sans: 'Geist_400Regular',
+  sansItalic: 'Geist_400Regular_Italic',
+  sansMedium: 'Geist_500Medium',
+  sansSemibold: 'Geist_600SemiBold',
 } as const;
 
 export const space = {
@@ -85,10 +84,21 @@ export const radius = {
 export const hairlineWidth = StyleSheet.hairlineWidth;
 
 export const typeScale: Record<string, TextStyle> = {
-  display: { fontFamily: fonts.serif, fontSize: 32, lineHeight: 40 },
-  title: { fontFamily: fonts.serif, fontSize: 22, lineHeight: 28 },
-  serifBody: { fontFamily: fonts.serif, fontSize: 19, lineHeight: 27 },
-  body: { fontFamily: fonts.sans, fontSize: 17, lineHeight: 26 },
+  display: {
+    fontFamily: fonts.sansSemibold,
+    fontSize: 28,
+    lineHeight: 36,
+    letterSpacing: -0.5,
+  },
+  title: {
+    fontFamily: fonts.sansSemibold,
+    fontSize: 20,
+    lineHeight: 27,
+    letterSpacing: -0.3,
+  },
+  /** Larger reading size for the user's own words (memories, questions). */
+  serifBody: { fontFamily: fonts.sans, fontSize: 18, lineHeight: 27 },
+  body: { fontFamily: fonts.sans, fontSize: 16, lineHeight: 25 },
   sub: { fontFamily: fonts.sans, fontSize: 15, lineHeight: 22 },
   caption: { fontFamily: fonts.sans, fontSize: 13, lineHeight: 18 },
   captionMedium: { fontFamily: fonts.sansMedium, fontSize: 13, lineHeight: 18 },

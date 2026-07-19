@@ -342,7 +342,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   brand: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.sansSemibold,
     marginBottom: space.xs,
   },
   subtitle: {

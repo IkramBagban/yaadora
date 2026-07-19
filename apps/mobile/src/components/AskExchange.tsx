@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import type { Exchange } from '../ask/useAskSession';
 import { durations } from '../theme/motion';
-import { hairlineWidth, space } from '../theme/tokens';
+import { hairlineWidth, radius, space } from '../theme/tokens';
 import { useTheme } from '../theme/useTheme';
 import { AppText } from './AppText';
 import { Caret } from './Caret';
@@ -11,10 +11,9 @@ import { CitationChip } from './CitationChip';
 import { ErrorState } from './ErrorState';
 import { NudgeReceipt } from './NudgeReceipt';
 import { PressableScale } from './PressableScale';
-import { ReasonedTrace } from './ReasonedTrace';
 import { ReminderChip } from './ReminderChip';
 import { SuggestionChip } from './SuggestionChip';
-import { ThinkingLine } from './ThinkingLine';
+import { ToolTrace } from './ToolTrace';
 
 interface AskExchangeProps {
   exchange: Exchange;
@@ -27,12 +26,12 @@ interface AskExchangeProps {
 }
 
 /**
- * One question → answer in the conversation feed. Editorial, not chat-bubble:
- * the question is a serif-italic line pulled to the RIGHT margin (the user's
- * side), the agent's answer is Inter body on the LEFT. A small uppercase label
- * over the answer names what kind of reply it is — sourced from memory, a plain
- * conversational reply, a "found nothing", or a clarifying question — so you can
- * tell who's speaking and what you got at a glance, without bubbles or avatars.
+ * One question → answer in the conversation feed. The user's message sits in a
+ * soft bubble on the right; the agent answers in clean full-width text on the
+ * left, with its working trace (searches, rules, entities) shown live above
+ * the answer and collapsed to a quiet summary once settled. A small uppercase
+ * label over the answer names what kind of reply it is — sourced from memory,
+ * a "found nothing", or a clarifying question.
  */
 export function AskExchange({
   exchange,
@@ -46,7 +45,6 @@ export function AskExchange({
   const streaming = exchange.status === 'streaming';
   const errored = exchange.status === 'error';
   const clarify = exchange.mode === 'clarify';
-  const thinking = streaming && exchange.text.length === 0;
   const settled = exchange.status === 'done';
   const bodyTone = dim ? 'ink3' : 'ink';
 
@@ -75,26 +73,31 @@ export function AskExchange({
     >
       {showRule && <View style={[styles.rule, { backgroundColor: colors.hairline }]} />}
 
-      {/* The user's words: serif italic, pulled to the right margin. */}
-      <Pressable
-        onLongPress={onSaveQuestion}
-        delayLongPress={320}
-        accessibilityHint="Long-press to save this as a memory"
-        style={styles.questionRow}
-      >
-        <AppText
-          variant="title"
-          italic
-          align="right"
-          tone={dim ? 'ink3' : 'ink2'}
-          style={styles.question}
+      {/* The user's message: a soft bubble pulled to the right. */}
+      <View style={styles.questionRow}>
+        <Pressable
+          onLongPress={onSaveQuestion}
+          delayLongPress={320}
+          accessibilityHint="Long-press to save this as a memory"
+          style={[
+            styles.questionBubble,
+            {
+              backgroundColor: colors.surfaceAlt,
+              borderColor: colors.hairline,
+              opacity: dim ? 0.6 : 1,
+            },
+          ]}
         >
-          {exchange.question}
-        </AppText>
-      </Pressable>
+          <AppText variant="body" tone="ink">
+            {exchange.question}
+          </AppText>
+        </Pressable>
+      </View>
 
-      {/* The agent's reply: left margin, labelled by kind. */}
+      {/* The agent's reply: full-width on the left, trace above, labelled by kind. */}
       <View style={styles.answerBlock}>
+        <ToolTrace steps={exchange.steps} streaming={streaming} dim={dim} />
+
         {clarify && exchange.text.length > 0 && (
           <KindLabel entering text="A quick question" tone="accent" />
         )}
@@ -107,14 +110,12 @@ export function AskExchange({
             caption="Your question wasn't lost — try again in a moment."
             onRetry={onRetry}
           />
-        ) : thinking ? (
-          <ThinkingLine step={exchange.liveStep} />
-        ) : (
+        ) : exchange.text.length > 0 ? (
           <AppText variant="body" tone={answerTone}>
             {exchange.text}
             {streaming && <Caret />}
           </AppText>
-        )}
+        ) : null}
       </View>
 
       {errored && exchange.text ? (
@@ -132,11 +133,6 @@ export function AskExchange({
 
       {settled && (
         <View style={styles.footer}>
-          {(exchange.mode === 'reason' ||
-            exchange.steps.some((s) => s.kind === 'rule')) && (
-            <ReasonedTrace steps={exchange.steps} />
-          )}
-
           {exchange.reminderSuggestion && (
             <ReminderChip suggestion={exchange.reminderSuggestion} />
           )}
@@ -202,14 +198,10 @@ function KindLabel({
       {text}
     </AppText>
   );
-  return (
-    <View style={styles.kindLabel}>
-      {entering ? (
-        <Animated.View entering={FadeIn.duration(durations.fade)}>{label}</Animated.View>
-      ) : (
-        label
-      )}
-    </View>
+  return entering ? (
+    <Animated.View entering={FadeIn.duration(durations.fade)}>{label}</Animated.View>
+  ) : (
+    label
   );
 }
 
@@ -224,16 +216,18 @@ const styles = StyleSheet.create({
   questionRow: {
     alignItems: 'flex-end',
   },
-  question: {
-    // Keep the user's line off the far margin so it reads as "their side".
-    maxWidth: '88%',
+  questionBubble: {
+    maxWidth: '85%',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderRadius: radius.lg,
+    borderBottomRightRadius: radius.sm - 4,
+    borderWidth: hairlineWidth,
   },
   answerBlock: {
-    marginTop: space.lg,
-    alignItems: 'flex-start',
-  },
-  kindLabel: {
-    marginBottom: space.sm,
+    marginTop: space.xl,
+    alignItems: 'stretch',
+    gap: space.md,
   },
   interrupted: {
     flexDirection: 'row',

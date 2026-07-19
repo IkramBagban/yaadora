@@ -34,6 +34,11 @@ export interface OutboxState {
   lastErrorDetails: ApiErrorDetails | null;
 }
 
+/** 
+ * Storage key used to persist the offline-first queue in AsyncStorage.
+ * We store the entire array of OutboxItems under this single key, rather than storing
+ * each item under its own key.
+ */
 const STORAGE_KEY = 'yaadora.outbox.v1';
 const MAX_RETRY_DELAY_MS = 30_000;
 
@@ -66,6 +71,9 @@ export function getOutboxState(): OutboxState {
 
 async function persist(): Promise<void> {
   try {
+    // We overwrite the entire value under STORAGE_KEY with the updated array of items.
+    // This is safe and does not cause items to be lost because `state.items` is the single
+    // source of truth containing all currently pending (unsynced) items.
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state.items));
   } catch {
     // Storage write failed; items remain in memory for this session.
@@ -87,15 +95,15 @@ export async function hydrateOutbox(): Promise<void> {
 /** Local-first save. Returns immediately; sync happens in the background. */
 export function enqueueMemory(rawText: string): OutboxItem {
   const item: OutboxItem = {
-    clientId: newClientId(),
+    clientId: newClientId(), // generating new UUID
     rawText,
     source: 'manual',
     createdAt: new Date().toISOString(),
     attempts: 0,
   };
   setState({ items: [...state.items, item], blockedError: null });
-  void persist();
-  void flushOutbox();
+  void persist();  
+  void flushOutbox(); 
   return item;
 }
 
@@ -128,7 +136,7 @@ export async function flushOutbox(): Promise<void> {
   }
   setState({ syncing: true });
 
-  let drained = false;
+  let drained = false; // true if we successfully flushed the queue to empty
   try {
     while (state.items.length > 0) {
       const item = state.items[0]!;
@@ -144,7 +152,7 @@ export async function flushOutbox(): Promise<void> {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed.';
         const details = err instanceof ApiError ? err.details : null;
-        setState({
+        setState({ // update the first item with error info
           items: state.items.map((it, i) =>
             i === 0 ? { ...it, attempts: it.attempts + 1, lastError: message, errorDetails: details } : it,
           ),

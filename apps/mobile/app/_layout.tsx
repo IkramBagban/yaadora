@@ -7,15 +7,12 @@ import * as SplashScreen from 'expo-splash-screen';
 import { ClerkProvider, useAuth } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
 import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
+  Geist_400Regular,
+  Geist_400Regular_Italic,
+  Geist_500Medium,
+  Geist_600SemiBold,
   useFonts,
-} from '@expo-google-fonts/inter';
-import {
-  InstrumentSerif_400Regular,
-  InstrumentSerif_400Regular_Italic,
-} from '@expo-google-fonts/instrument-serif';
+} from '@expo-google-fonts/geist';
 import { startSyncEngine } from '../src/capture/sync';
 import { ClerkTokenBridge } from '../src/auth/ClerkTokenBridge';
 import { CLERK_PUBLISHABLE_KEY } from '../src/api/config';
@@ -129,11 +126,10 @@ function RootNavigator() {
 export default function RootLayout() {
   const { colors } = useTheme();
   const [fontsLoaded] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    InstrumentSerif_400Regular,
-    InstrumentSerif_400Regular_Italic,
+    Geist_400Regular,
+    Geist_400Regular_Italic,
+    Geist_500Medium,
+    Geist_600SemiBold,
   });
 
   useEffect(() => {
