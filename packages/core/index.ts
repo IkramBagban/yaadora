@@ -71,6 +71,10 @@ export {
   buildContextPackText,
   estimateTokens,
   CONTEXT_PACK_TOKEN_BUDGET,
+  findDuplicateReminder,
+  reminderTextSimilarity,
+  DEDUPE_WINDOW_HOURS,
+  DEDUPE_SIMILARITY_THRESHOLD,
   matchStandingRules,
   filterRuleCandidates,
   shortRuleName,
@@ -141,6 +145,25 @@ export type {
   SinceThenItem,
   RaisingHistoryItem,
 } from "./retrieval";
+
+// Speech-to-text (voice capture). Audio is transcribed and discarded — the
+// transcript flows through the normal capture path. Never persists audio.
+export {
+  transcribeAudio,
+  isTranscriptionConfigured,
+  buildBiasPrompt,
+  getBiasTermsForUser,
+  invalidateBiasTerms,
+  AllKeysExhaustedError,
+  isKeyExhaustedError,
+  createKeyPool,
+  MAX_AUDIO_BYTES,
+} from "./transcription";
+export type {
+  TranscribeInput,
+  TranscribeResult,
+  KeyPool,
+} from "./transcription";
 
 // Proactive brain (spec 02 §5.4, §3.3, §6) — gates + awareness + push helpers.
 export {

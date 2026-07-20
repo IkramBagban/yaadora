@@ -34,7 +34,17 @@ export function createRedisConnection(): ConnectionOptions {
       "REDIS_URL is not set. Bun auto-loads .env — set REDIS_URL (e.g. redis://localhost:6379).",
     );
   }
-  return { url, maxRetriesPerRequest: null };
+  // BullMQ requires maxRetriesPerRequest: null on Worker connections.
+  // Keep options minimal so free-tier Redis Cloud (often ~30 clients) is not
+  // stressed by extra ready-checks / offline queues from abandoned clients.
+  return {
+    url,
+    maxRetriesPerRequest: null,
+    enableOfflineQueue: false,
+    enableReadyCheck: false,
+    // Helps identify this app in Redis CLIENT LIST when debugging max-clients.
+    connectionName: process.env.REDIS_CONNECTION_NAME ?? "yaadora",
+  };
 }
 
 /**

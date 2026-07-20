@@ -20,6 +20,22 @@
  * Prereqs: server + worker + Postgres + Redis up, with AUTH_ALLOW_BOOTSTRAP=true
  * and AUTH_BOOTSTRAP_TOKEN matching the server. See eval/README.md.
  *
+ * HOW TO RUN (from repo root):
+ *   1. Infra:   docker compose up -d                       # Postgres + Redis
+ *   2. Server:  AUTH_ALLOW_BOOTSTRAP=true \
+ *               AUTH_BOOTSTRAP_TOKEN=dev-token \
+ *               bun run --filter=server dev                # terminal A
+ *   3. Worker:  bun run --filter=worker dev                # terminal B
+ *   4. Eval:    AUTH_BOOTSTRAP_TOKEN=dev-token bun run eval # terminal C
+ *
+ *   Subset while iterating (comma-separated case ids from cases.ts):
+ *     EVAL_ONLY=c-where-live,c-urhan-colleague \
+ *       AUTH_BOOTSTRAP_TOKEN=dev-token bun run eval
+ *
+ *   The account eval data lands in is SEED_USER_EMAIL (set on the SERVER, not
+ *   here), default owner@yaadora.local. Change it in .env and restart the
+ *   server. Exit codes: 0 = gates passed, 1 = a gate failed, 2 = setup error.
+ *
  * Env:
  *   YAADORA_SERVER_URL   (default http://localhost:3000)
  *   AUTH_BOOTSTRAP_TOKEN (required — bearer for the bootstrap eval user)

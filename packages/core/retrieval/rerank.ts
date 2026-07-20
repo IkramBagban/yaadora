@@ -6,6 +6,9 @@ import type {
   RetrievedMemory,
 } from "@repo/db";
 import { fastModel } from "../ai/models";
+import { createLogger } from "@repo/logger";
+
+const log = createLogger("retrieval:rerank");
 
 /**
  * Rerank & assemble (spec 02 §3.3).
@@ -13,6 +16,24 @@ import { fastModel } from "../ai/models";
  * A precision pass over the high-recall hybrid pool: an LLM scores each
  * candidate's relevance to the question; we take the top 10–15. Salience
  * (spec 02 §5.4) is applied as a TIE-BREAKER prior — never a filter.
+ *
+ * DEFAULT: OFF. The LLM rerank is a second `fastModel` round-trip on the path of
+ * EVERY search_memories call, and the agent may search up to MAX_STEPS times per
+ * turn — so it multiplies. Set RERANK_ENABLED=true to turn it back on.
+ *
+ * When disabled we fall back to the fused retrieval score (see `fuse()` in
+ * @repo/db), with salience as tie-breaker. Be aware what that costs: each
+ * channel is normalised to [0,1] independently, so the top hit of a channel that
+ * found nothing useful still scores ~1.0. The fused order is a RECALL merge, not
+ * a relevance judgment. Turning rerank off trades precision for latency.
+ *
+ * `relevance` is still populated when disabled (from the fused score) so
+ * `topRelevance` → `confidence` keeps a value — but it is NOT calibrated the way
+ * the LLM's 0–1 judgment is. Don't build a refusal threshold on it without
+ * re-enabling rerank or replacing it with a cross-encoder.
+ *
+ * TODO(perf): a cross-encoder (e.g. bge-reranker) would give the precision back
+ * without the LLM round-trip. The interface here stays the same.
  */
 
 /** A pool item unified across facts + memories for reranking. */
@@ -78,11 +99,43 @@ const RerankSchema = z.object({
 });
 
 /**
- * LLM rerank. Scores each candidate's relevance to the question, then returns
- * the top `topK` fused with salience as a tie-breaker prior.
+ * Is the LLM rerank pass on? Off unless RERANK_ENABLED is explicitly truthy.
  *
- * TODO(perf): swap the LLM rerank for a cross-encoder (e.g. bge-reranker) if
- * latency/cost demands (spec 02 §3.3). The interface stays the same.
+ * Read per call rather than cached at module load so tests and the eval harness
+ * can flip it between runs (an A/B ablation is the only honest way to decide
+ * whether the precision is worth the latency).
+ */
+export function isRerankEnabled(): boolean {
+  const raw = process.env.RERANK_ENABLED?.trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes";
+}
+
+/** Order by fused retrieval score, then salience, then take topK. */
+function orderWithoutRerank(
+  candidates: Candidate[],
+  topK: number,
+): RerankedCandidate[] {
+  return [...candidates]
+    .sort((a, b) => {
+      if (b.retrievalScore !== a.retrievalScore) {
+        return b.retrievalScore - a.retrievalScore;
+      }
+      return b.salience - a.salience;
+    })
+    .slice(0, topK)
+    .map((c) => ({ ...c, relevance: c.retrievalScore }));
+}
+
+/**
+ * Rerank to a precise top-k.
+ *
+ * With RERANK_ENABLED on: an LLM scores each candidate's relevance to the
+ * question, fused with salience as a tie-breaker prior.
+ * Off (the default): falls back to the retrieval-score ordering above, with no
+ * model call at all.
+ *
+ * Never throws on a model failure — a reranker that 500s must degrade to the
+ * retrieval order, not take the whole answer down with it.
  */
 export async function rerankCandidates(params: {
   question: string;
@@ -90,9 +143,21 @@ export async function rerankCandidates(params: {
   topK?: number;
   /** cap how many candidates are shown to the reranker (token control) */
   maxToScore?: number;
+  /** force on/off, bypassing the env var (used by evals + tests) */
+  enabled?: boolean;
 }): Promise<RerankedCandidate[]> {
   const { question, topK = 12, maxToScore = 60 } = params;
   if (!params.candidates.length) return [];
+
+  const enabled = params.enabled ?? isRerankEnabled();
+  if (!enabled) return orderWithoutRerank(params.candidates, topK);
+
+  // Nothing to reorder: the pool already fits in topK, so an LLM call could
+  // only change the ordering of items we're keeping regardless. Not worth a
+  // round-trip.
+  if (params.candidates.length <= topK) {
+    return orderWithoutRerank(params.candidates, topK);
+  }
 
   // Pre-trim by retrieval score so the reranker sees the strongest pool.
   const pool = [...params.candidates]
@@ -106,14 +171,16 @@ export async function rerankCandidates(params: {
     })
     .join("\n");
 
-  const { object } = await generateObject({
-    model: fastModel,
-    schema: RerankSchema,
-    system:
-      "You are the reranking stage of a personal memory system. Score how " +
-      "relevant each candidate is to answering the question, from 0 (irrelevant) " +
-      "to 1 (directly answers it). Judge only relevance to THIS question.",
-    prompt: `Question:
+  let object: z.infer<typeof RerankSchema>;
+  try {
+    const result = await generateObject({
+      model: fastModel,
+      schema: RerankSchema,
+      system:
+        "You are the reranking stage of a personal memory system. Score how " +
+        "relevant each candidate is to answering the question, from 0 (irrelevant) " +
+        "to 1 (directly answers it). Judge only relevance to THIS question.",
+      prompt: `Question:
 """
 ${question}
 """
@@ -122,7 +189,17 @@ Candidates:
 ${listing}
 
 Return a relevance score for every candidate index.`,
-  });
+    });
+    object = result.object;
+  } catch (err) {
+    // A rate-limited or malformed rerank must not fail the whole answer — fall
+    // back to retrieval order, which is exactly the disabled-path behaviour.
+    log.warn("rerank failed; falling back to retrieval order", {
+      message: err instanceof Error ? err.message : String(err),
+      candidates: pool.length,
+    });
+    return orderWithoutRerank(params.candidates, topK);
+  }
 
   const scoreByRef = new Map<number, number>();
   for (const r of object.rankings) scoreByRef.set(r.ref, r.relevance);

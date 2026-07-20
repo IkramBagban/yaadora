@@ -5,7 +5,7 @@ import {
   type RetrievedMemory,
 } from "@repo/db";
 import { understandQuery, type UnderstoodQuery } from "./understanding";
-import { buildCandidates, rerankCandidates } from "./rerank";
+import { buildCandidates, rerankCandidates, isRerankEnabled } from "./rerank";
 import { assembleContext, type Citation } from "./answer";
 import { createLogger } from "@repo/logger";
 
@@ -143,6 +143,9 @@ export async function retrieveMemories(params: {
   log.debug("Candidates Reranked", {
     query,
     stage: "reranked",
+    // Off by default (RERANK_ENABLED). When false, `topRelevance` is the fused
+    // retrieval score, not a calibrated relevance judgment.
+    rerankEnabled: isRerankEnabled(),
     reranked: reranked.length,
     topRelevance,
     topSnippets: reranked.slice(0, 3).map((c) => ({

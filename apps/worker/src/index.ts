@@ -36,12 +36,37 @@ const log = createLogger("worker");
  * drift.
  *
  * Run: `bun run src/index.ts` (or `bun run dev` for watch mode).
+ *
+ * Redis free tiers often cap ~30 clients. Each BullMQ Worker uses ~2
+ * connections, and each producer Queue uses ~1. WORKER_MINIMAL=true (default in
+ * development) starts only ingestion + consolidation so local dev does not hit
+ * "ERR max number of clients reached".
  */
+
+function envFlag(name: string, defaultValue: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultValue;
+  return !["0", "false", "no", "off"].includes(raw.toLowerCase());
+}
+
+const IS_DEV = (process.env.NODE_ENV ?? "development") !== "production";
+// Minimal mode: fewer Redis connections. Override with WORKER_MINIMAL=false.
+const WORKER_MINIMAL = envFlag("WORKER_MINIMAL", IS_DEV);
+const ENABLE_REPROCESS = envFlag("WORKER_ENABLE_REPROCESS", !WORKER_MINIMAL);
+const ENABLE_CONVERSATION_MAINTENANCE = envFlag(
+  "WORKER_ENABLE_CONVERSATION_MAINTENANCE",
+  !WORKER_MINIMAL,
+);
+const ENABLE_PROSPECTION = envFlag("WORKER_ENABLE_PROSPECTION", !WORKER_MINIMAL);
 
 // Concurrency: ingestion is I/O-bound (LLM + embeddings + DB). A handful of
 // concurrent jobs keeps throughput up without hammering the model API. Tune via
-// INGESTION_CONCURRENCY.
-const CONCURRENCY = Number(process.env.INGESTION_CONCURRENCY ?? "5");
+// INGESTION_CONCURRENCY. Cap lower in minimal mode to reduce burst load.
+const CONCURRENCY = Number(
+  process.env.INGESTION_CONCURRENCY ?? (WORKER_MINIMAL ? "2" : "5"),
+);
+
+const closers: Array<() => Promise<void>> = [];
 
 const worker = new Worker<IngestionJobData>(
   INGESTION_QUEUE_NAME,
@@ -63,6 +88,7 @@ const worker = new Worker<IngestionJobData>(
     concurrency: CONCURRENCY,
   },
 );
+closers.push(() => worker.close());
 
 worker.on("ready", () => {
   log.info("ingestion worker ready", {
@@ -121,10 +147,7 @@ const consolidationWorker = new Worker<ConsolidationJobData>(
   },
   { connection: createRedisConnection(), concurrency: 1 },
 );
-
-// Historical replay has its own rate-limited worker, so normal capture
-// ingestion remains responsive. An operator starts it with enqueueReprocess().
-const reprocessWorker = registerReprocessWorker();
+closers.push(() => consolidationWorker.close());
 
 consolidationWorker.on("error", (err) => {
   log.error("consolidation worker error", err);
@@ -135,37 +158,53 @@ scheduleNightlyConsolidation()
   .then(() => log.info("nightly consolidation scheduled"))
   .catch((err) => log.error("could not schedule consolidation", err));
 
-// --- Conversation maintenance (idle sweep + retention) — P0 item 2 ---------
-// Append-only: module owns its queue/worker; do not fold into shared registration.
-const conversationMaintenanceWorker = startConversationMaintenanceWorker();
+// Optional workers — each one opens ~2 Redis connections (+ Queue producers).
+if (ENABLE_REPROCESS) {
+  const reprocessWorker = registerReprocessWorker();
+  closers.push(() => reprocessWorker.close());
+} else {
+  log.info("reprocess worker disabled (WORKER_MINIMAL / WORKER_ENABLE_REPROCESS)");
+}
 
-scheduleConversationMaintenance()
-  .then(() => log.info("conversation maintenance scheduled"))
-  .catch((err) => log.error("could not schedule conversation maintenance", err));
+if (ENABLE_CONVERSATION_MAINTENANCE) {
+  const conversationMaintenanceWorker = startConversationMaintenanceWorker();
+  closers.push(() => conversationMaintenanceWorker.close());
+  scheduleConversationMaintenance()
+    .then(() => log.info("conversation maintenance scheduled"))
+    .catch((err) =>
+      log.error("could not schedule conversation maintenance", err),
+    );
+} else {
+  log.info(
+    "conversation maintenance disabled (WORKER_MINIMAL / WORKER_ENABLE_CONVERSATION_MAINTENANCE)",
+  );
+}
 
-// --- Prospection (daily foresight, morning local time) — P2 -----------------
-// Append-only: module owns its queue/worker; do not fold into shared registration.
-const prospectionWorker = startProspectionWorker();
-
-scheduleProspection()
-  .then(() => log.info("prospection scheduled"))
-  .catch((err) => log.error("could not schedule prospection", err));
+if (ENABLE_PROSPECTION) {
+  const prospectionWorker = startProspectionWorker();
+  closers.push(() => prospectionWorker.close());
+  scheduleProspection()
+    .then(() => log.info("prospection scheduled"))
+    .catch((err) => log.error("could not schedule prospection", err));
+} else {
+  log.info("prospection worker disabled (WORKER_MINIMAL / WORKER_ENABLE_PROSPECTION)");
+}
 
 // Graceful shutdown so in-flight jobs finish and connections close cleanly.
 async function shutdown(signal: string) {
   log.info("shutdown signal received — closing workers", { signal });
-  await Promise.all([
-    worker.close(),
-    consolidationWorker.close(),
-    conversationMaintenanceWorker.close(),
-    prospectionWorker.close(),
-    reprocessWorker.close(),
-  ]);
+  await Promise.all(closers.map((close) => close()));
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-log.info(
-  "starting ingestion + consolidation + conversation-maintenance + prospection + reprocess workers",
-);
+log.info("starting workers", {
+  minimal: WORKER_MINIMAL,
+  ingestion: true,
+  consolidation: true,
+  reprocess: ENABLE_REPROCESS,
+  conversationMaintenance: ENABLE_CONVERSATION_MAINTENANCE,
+  prospection: ENABLE_PROSPECTION,
+  concurrency: CONCURRENCY,
+});

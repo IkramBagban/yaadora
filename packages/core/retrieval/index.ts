@@ -13,7 +13,7 @@
 
 export { understandQuery, QueryUnderstandingSchema } from "./understanding";
 export type { UnderstoodQuery, QueryUnderstanding } from "./understanding";
-export { rerankCandidates, buildCandidates } from "./rerank";
+export { rerankCandidates, buildCandidates, isRerankEnabled } from "./rerank";
 export type { Candidate, RerankedCandidate } from "./rerank";
 export { assembleContext, streamGroundedAnswer, REFUSAL_TEXT } from "./answer";
 export type { Citation, AssembledContext } from "./answer";
@@ -29,8 +29,18 @@ export type {
   AskHistoryTurn,
 } from "./agent";
 
+// Reminder duplicate detection — the read-before-write guard for set_reminder.
+export {
+  findDuplicateReminder,
+  reminderTextSimilarity,
+  tokenizeReminderText,
+  DEDUPE_WINDOW_HOURS,
+  DEDUPE_SIMILARITY_THRESHOLD,
+} from "./reminder-dedupe";
+export type { DuplicateCandidate, DuplicateMatch } from "./reminder-dedupe";
+
 // The context pack (spec 02 §4) — always-present working memory, assembled fresh
-// per Ask turn from precomputed digests + near-dated loops.
+// per Ask turn from precomputed digests + near-dated loops + due reminders.
 export {
   assembleContextPack,
   buildContextPackText,
@@ -42,6 +52,7 @@ export type {
   ContextPackSlots,
   AssembleContextPackParams,
   LoopLine,
+  ReminderLine,
   RuleSlot,
   NudgeDirective,
   EntityContextSlot,

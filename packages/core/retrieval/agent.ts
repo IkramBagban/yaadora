@@ -8,8 +8,11 @@ import {
   surfacings,
   openLoops,
   eq,
+  and,
   sql,
   getMemoriesByIds,
+  searchReminders,
+  findNearbyPendingReminders,
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { reasoningModel } from "../ai/models";
@@ -24,6 +27,7 @@ import {
   type EntityContextSlot,
   type OnYourMindDossier,
 } from "./context-pack";
+import { findDuplicateReminder } from "./reminder-dedupe";
 import { selectObservation } from "./observations";
 import { selectFollowUps, type FollowUpDossier } from "./follow-ups";
 import {
@@ -157,9 +161,15 @@ People & projects (graph doorway):
 - You have a get_entity_context tool. If a SEARCH result surfaces a known person or project you want to reason about (e.g. someone who fits what the user is asking), call get_entity_context with their name to pull their profile, open threads, facts, and connections before answering. Use it only for people/projects the user actually has; if it returns found:false, do not invent one.
 - Connections in an entity's context may name OTHER known people/projects (e.g. "co-founded with Vikram (ended)"). You may point out a link the user might not have made, when it's relevant — grounded in that connection, never invented.
 
-Setting reminders:
-- You have a set_reminder tool. Use it ONLY when the user explicitly asks to be reminded or to set/schedule a reminder ("remind me to …", "set a reminder for …"). Resolve the time to an absolute moment from the current date/time above, call set_reminder(text, dueAt), then confirm in one short line (e.g. "Done — I'll remind you Sunday at 3 PM."). If they ask for a reminder but give no usable time, ask for the time instead of guessing.
-- Do NOT call set_reminder for things the user only mentions in passing ("I have a meeting Sunday") — those are handled separately as a suggestion. Only act when they actually ask you to set one.
+Reminders (you can see, create, change, and cancel them):
+- READ: the context pack already lists their pending reminders due in the next 7 days. Answer "what do I need to do this week?" or "did I set one for X?" straight from that list — no tool call needed. Use search_reminders only for things outside that window, a specific lookup, or to see done/dismissed ones. Reminders in the pack are facts the user actually scheduled, so state them plainly — don't hedge the way you would about an inferred open thread.
+- CREATE: use set_reminder ONLY when the user explicitly asks to be reminded or to set/schedule one ("remind me to …", "set a reminder for …"). Resolve the time to an absolute moment from the current date/time above, then confirm in one short line (e.g. "Done — I'll remind you Sunday at 3 PM."). If they ask for a reminder but give no usable time, ask for the time instead of guessing.
+- REPEATS: set_reminder supports once (default), daily, and weekly. "every morning at 8" is daily; "every Monday and Thursday" is weekly with weekdays [1,4] (0=Sunday … 6=Saturday). Weekly REQUIRES weekdays — if the user says "weekly" without naming days, ask which days rather than picking one.
+- UPDATE: use update_reminder to move, rename, reschedule, change the repeat, or mark one done. If the user says they finished something, set status "done" — not dismissed.
+- CANCEL: use delete_reminder when they no longer want it. Completed and cancelled are different things to a person; don't collapse them.
+- IDs: update_reminder and delete_reminder need a real id from the context pack or search_reminders. Never invent one. If you can't find the reminder they mean, say so or ask which one — don't guess and act on the wrong row.
+- If set_reminder comes back with duplicate:true, the reminder already exists. Say it's already set; do not try again with reworded text.
+- Do NOT create reminders for things the user only mentions in passing ("I have a meeting Sunday") — those are handled separately as a suggestion. Only act when they actually ask.
 
 Asking back (rare — prefer to infer):
 - First resolve follow-ups from the conversation so far. A plain topic follow-up like "any about travelling?" or "what about work?" right after a broader question is NOT ambiguous — treat it as a fresh search on that topic and answer it. Don't ask the user what they mean.
@@ -741,34 +751,120 @@ export async function answerQuestion(params: {
         };
       },
     }),
+    search_reminders: tool({
+      description:
+        'Look up the user\'s existing reminders. Use this to answer questions about what they have scheduled ("what am I supposed to do this week?", "did I set a reminder for the dentist?"), and ALWAYS before updating or deleting one, to get its id. The context pack already lists pending reminders due in the next 7 days — only call this for anything beyond that window, for a specific lookup, or to see done/dismissed ones.',
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe(
+            'words to match against reminder text, e.g. "dentist". Use "" to list everything in the given statuses.',
+          ),
+        statuses: z
+          .array(z.enum(["pending", "done", "dismissed", "suggested"]))
+          .nullish()
+          .describe("lifecycle states to include; defaults to pending only"),
+      }),
+      execute: async ({ query, statuses }) => {
+        const rows = await searchReminders(userId, query ?? "", {
+          statuses: statuses ?? undefined,
+          limit: 25,
+        });
+
+        const step: AskStep = {
+          kind: "reminder",
+          label: `Checked reminders${query ? `: ${query}` : ""}`,
+        };
+        steps.push(step);
+        onStep?.(step);
+
+        // JSON-serializable primitives only — a Date breaks the next agent step.
+        return {
+          ok: true,
+          count: rows.length,
+          reminders: rows.map((r) => ({
+            id: r.id,
+            text: r.text,
+            dueAt: r.dueAt.toISOString(),
+            status: r.status,
+            recurrence: r.recurrence,
+            origin: r.origin,
+          })),
+        };
+      },
+    }),
     set_reminder: tool({
       description:
-        'Create a reminder when the user EXPLICITLY asks to be reminded or to set/schedule one (e.g. "remind me to call mom tomorrow at 6pm", "set a reminder for the dentist Monday 9am"). Resolve the time to an absolute ISO 8601 instant using the current date/time in the system prompt. Do NOT use this for things the user merely mentions in passing — only when they actually ask you to set a reminder.',
+        'Create a reminder when the user EXPLICITLY asks to be reminded or to set/schedule one (e.g. "remind me to call mom tomorrow at 6pm", "set a reminder for the dentist Monday 9am", "remind me every morning at 8 to take my meds"). Resolve the time to an absolute ISO 8601 instant using the current date/time in the system prompt. Supports one-off, daily, and weekly repeats. Do NOT use this for things the user merely mentions in passing — only when they actually ask you to set a reminder.',
       inputSchema: z.object({
         text: z.string().describe('short imperative, e.g. "Call mom"'),
         dueAt: z
           .string()
-          .describe("absolute ISO 8601 datetime for when to remind"),
+          .describe(
+            "absolute ISO 8601 datetime. For daily/weekly, its clock time is the recurring time-of-day.",
+          ),
+        recurrence: z
+          .enum(["once", "daily", "weekly"])
+          .nullish()
+          .describe("repeat rule; defaults to once"),
+        weekdays: z
+          .array(z.number().int().min(0).max(6))
+          .nullish()
+          .describe(
+            "REQUIRED when recurrence is weekly: days to fire on, 0=Sunday … 6=Saturday",
+          ),
       }),
-      execute: async ({ text, dueAt }) => {
+      execute: async ({ text, dueAt, recurrence, weekdays }) => {
         const due = new Date(dueAt);
         if (Number.isNaN(due.getTime())) {
           return { ok: false, error: "Could not resolve a valid time." };
         }
+
+        const repeat = recurrence ?? "once";
+        // Mirrors the API's validation so agent-created rows can't be shaped
+        // differently from UI-created ones.
+        if (repeat === "weekly" && (!weekdays || weekdays.length === 0)) {
+          return {
+            ok: false,
+            error:
+              "weekdays is required for a weekly reminder. Ask the user which days.",
+          };
+        }
+
+        const trimmed = text.trim();
+
+        // Read before write: the same reminder can be asked for twice across
+        // turns, and silently creating a second row means two notifications.
+        const nearby = await findNearbyPendingReminders(userId, due);
+        const duplicate = findDuplicateReminder(trimmed, due, nearby);
+        if (duplicate) {
+          return {
+            ok: false,
+            duplicate: true,
+            existingId: duplicate.id,
+            existingText: duplicate.text,
+            existingDueAt: duplicate.dueAt.toISOString(),
+            error:
+              "A matching reminder already exists. Tell the user it's already set rather than creating another. If they want it changed, use update_reminder with this id.",
+          };
+        }
+
         const [created] = await db
           .insert(reminders)
           .values({
             userId,
-            text: text.trim(),
+            text: trimmed,
             dueAt: due,
             origin: "manual",
             status: "pending",
+            recurrence: repeat,
+            weekdays: repeat === "weekly" ? (weekdays ?? null) : null,
           })
           .returning({ id: reminders.id, dueAt: reminders.dueAt });
 
         const step: AskStep = {
           kind: "reminder",
-          label: `Reminder set: ${text.trim()}`,
+          label: `Reminder set: ${trimmed}`,
         };
         steps.push(step);
         onStep?.(step);
@@ -776,8 +872,142 @@ export async function answerQuestion(params: {
         // Return ONLY JSON-serializable primitives: a Date here breaks the tool
         // result's ModelMessage schema and fails the next agent step.
         return created
-          ? { ok: true, reminderId: created.id, dueAt: due.toISOString() }
+          ? {
+              ok: true,
+              reminderId: created.id,
+              dueAt: due.toISOString(),
+              recurrence: repeat,
+            }
           : { ok: false, error: "Failed to save the reminder." };
+      },
+    }),
+    update_reminder: tool({
+      description:
+        'Change an existing reminder — its text, time, repeat rule, or status. Use when the user asks to move, rename, reschedule, or complete one ("push the dentist to Friday", "make that every weekday instead", "I already did that one"). You MUST pass the id from search_reminders or the context pack; never guess one. Provide only the fields that change.',
+      inputSchema: z.object({
+        id: z.string().describe("the reminder's id"),
+        text: z.string().nullish().describe("new text, if it changed"),
+        dueAt: z
+          .string()
+          .nullish()
+          .describe("new absolute ISO 8601 datetime, if it changed"),
+        recurrence: z
+          .enum(["once", "daily", "weekly"])
+          .nullish()
+          .describe("new repeat rule, if it changed"),
+        weekdays: z
+          .array(z.number().int().min(0).max(6))
+          .nullish()
+          .describe("0=Sunday … 6=Saturday; required if recurrence is weekly"),
+        status: z
+          .enum(["pending", "done", "dismissed"])
+          .nullish()
+          .describe('use "done" when the user says they finished it'),
+      }),
+      execute: async ({ id, text, dueAt, recurrence, weekdays, status }) => {
+        const set: Record<string, unknown> = {};
+
+        if (text != null && text.trim().length > 0) set.text = text.trim();
+        if (status != null) set.status = status;
+
+        if (dueAt != null) {
+          const due = new Date(dueAt);
+          if (Number.isNaN(due.getTime())) {
+            return { ok: false, error: "Could not resolve a valid time." };
+          }
+          set.dueAt = due;
+        }
+
+        if (recurrence != null) {
+          if (recurrence === "weekly") {
+            if (!weekdays || weekdays.length === 0) {
+              return {
+                ok: false,
+                error:
+                  "weekdays is required for a weekly reminder. Ask the user which days.",
+              };
+            }
+            set.weekdays = weekdays;
+          } else {
+            // Non-weekly recurrence never carries weekdays (matches the API).
+            set.weekdays = null;
+          }
+          set.recurrence = recurrence;
+        } else if (weekdays != null) {
+          set.weekdays = weekdays;
+        }
+
+        if (Object.keys(set).length === 0) {
+          return { ok: false, error: "Nothing to change." };
+        }
+
+        // Owner-scoped: a wrong id must not let one user touch another's row.
+        const [updated] = await db
+          .update(reminders)
+          .set(set)
+          .where(and(eq(reminders.id, id), eq(reminders.userId, userId)))
+          .returning({
+            id: reminders.id,
+            text: reminders.text,
+            dueAt: reminders.dueAt,
+            status: reminders.status,
+            recurrence: reminders.recurrence,
+          });
+
+        if (!updated) {
+          return {
+            ok: false,
+            error: "No reminder with that id. Run search_reminders to find it.",
+          };
+        }
+
+        const step: AskStep = {
+          kind: "reminder",
+          label: `Reminder updated: ${updated.text}`,
+        };
+        steps.push(step);
+        onStep?.(step);
+
+        return {
+          ok: true,
+          reminderId: updated.id,
+          text: updated.text,
+          dueAt: updated.dueAt?.toISOString() ?? null,
+          status: updated.status,
+          recurrence: updated.recurrence,
+        };
+      },
+    }),
+    delete_reminder: tool({
+      description:
+        'Cancel a reminder the user no longer wants ("forget the dentist one", "cancel that reminder", "stop reminding me about the gym"). You MUST pass the id from search_reminders or the context pack; never guess one. If the user instead says they COMPLETED it, use update_reminder with status "done" — done and cancelled mean different things to them.',
+      inputSchema: z.object({
+        id: z.string().describe("the reminder's id"),
+      }),
+      execute: async ({ id }) => {
+        // Soft delete, matching DELETE /reminders/:id — the row stays so the
+        // user can undo and so the agent can see it was dismissed, not missed.
+        const [updated] = await db
+          .update(reminders)
+          .set({ status: "dismissed" })
+          .where(and(eq(reminders.id, id), eq(reminders.userId, userId)))
+          .returning({ id: reminders.id, text: reminders.text });
+
+        if (!updated) {
+          return {
+            ok: false,
+            error: "No reminder with that id. Run search_reminders to find it.",
+          };
+        }
+
+        const step: AskStep = {
+          kind: "reminder",
+          label: `Reminder cancelled: ${updated.text}`,
+        };
+        steps.push(step);
+        onStep?.(step);
+
+        return { ok: true, reminderId: updated.id, status: "dismissed" };
       },
     }),
     clarify: tool({
@@ -870,12 +1100,29 @@ export async function answerQuestion(params: {
     { role: "user", content: question },
   ];
 
+  // GPT-5 Responses API multi-step tool loops re-send reasoning item ids (rs_*).
+  // Real OpenAI can persist those when store:true. Local proxies (CLIProxyAPI
+  // via OPENAI_BASE_URL) usually cannot — store:true still comes back as
+  // "Item with id 'rs_…' not found". Explicit store:false makes the AI SDK
+  // drop/encrypt reasoning parts instead of referencing unsaved item ids.
+  // Override with OPENAI_STORE=true|false if needed.
+  const openaiStoreEnv = process.env.OPENAI_STORE?.trim().toLowerCase();
+  const openaiStore =
+    openaiStoreEnv === "true"
+      ? true
+      : openaiStoreEnv === "false"
+        ? false
+        : !process.env.OPENAI_BASE_URL?.trim();
+
   const stream = streamText({
     model: reasoningModel,
     system: systemPrompt(now, timezone, contextPackText),
     messages,
     tools,
     stopWhen: [stepCountIs(MAX_STEPS), hasToolCall("clarify")],
+    providerOptions: {
+      openai: { store: openaiStore },
+    },
   });
 
   let resolveResult!: (r: AskResult) => void;

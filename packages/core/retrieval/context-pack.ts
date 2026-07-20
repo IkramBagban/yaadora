@@ -1,16 +1,21 @@
-import { getDigest, getDueOpenLoops } from "@repo/db";
+import { getDigest, getDueOpenLoops, getDueReminders } from "@repo/db";
 
 /**
  * The context pack (spec 02 §4) — the small, always-present working memory
  * assembled fresh per `/ask` turn, so search becomes the tool for *depth*, not
  * the only door into memory (spec 01 D8).
  *
- * Pack slots: profile summary + 7-day digest + near-dated open loops + matched
- * standing rules (P1, filled by the rule matcher) + nudge directive (P2,
- * awareness pass + gates) + entity context (P3, graph doorway pre-fetch).
+ * Pack slots: profile summary + 7-day digest + due reminders + near-dated open
+ * loops + matched standing rules (P1, filled by the rule matcher) + nudge
+ * directive (P2, awareness pass + gates) + entity context (P3, graph doorway
+ * pre-fetch).
  *
  * Budget: ≤2,000 tokens, HARD-TRUNCATED in the priority order
- *   rules > nudge > dated loops > entity context > onYourMind > digest > profile
+ *   rules > nudge > reminders > dated loops > entity context > onYourMind >
+ *   digest > profile
+ * Reminders outrank loops because a reminder is something the user explicitly
+ * committed to, while a loop is inferred from their prose — if only one fits,
+ * keep the one they actually asked for.
  * (spec 02 §4, extended in P3 — entity context sits after dated loops; P5/spec
  * 04 add the `onYourMind` section just below it, the first slot dropped under
  * pressure).
@@ -29,6 +34,8 @@ export const CONTEXT_PACK_TOKEN_BUDGET = 2000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Near window for dated open loops (spec 02 §4: due ≤7d). */
 const DEFAULT_LOOP_HORIZON_DAYS = 7;
+/** Most reminders the pack carries; the rest are reachable via search_reminders. */
+const REMINDER_CAP = 10;
 
 /**
  * Cheap, model-agnostic token estimate (~4 chars/token). Deliberately an
@@ -121,11 +128,35 @@ export interface EntityContextSlot {
   receipts: string[];
 }
 
+/**
+ * A pending reminder the user has actually committed to (spec 01 §3.6).
+ *
+ * Distinct from `LoopLine`: a loop is inferred from prose during ingestion,
+ * whereas a reminder was explicitly created or confirmed. That difference is
+ * why they render as separate sections — the agent should speak about a
+ * reminder with certainty and a loop with hedging.
+ */
+export interface ReminderLine {
+  id: string;
+  text: string;
+  dueAt: Date;
+  /** once | daily | weekly. Shown so the agent doesn't call a daily one a one-off. */
+  recurrence: string;
+  /** manual | suggested (confirmed). Not rendered; useful for callers. */
+  origin: string;
+}
+
 /** The raw slot inputs, before budgeting/rendering. */
 export interface ContextPackSlots {
   profile: string | null;
   weekDigest: string | null;
   loops: LoopLine[];
+  /**
+   * Pending reminders due within the horizon, soonest first. Overdue ones are
+   * included and flagged — an overdue reminder is the single most relevant
+   * thing the user might be asking about.
+   */
+  reminders?: ReminderLine[];
   /** Matched standing rules (0–3). Filled by the rule matcher (spec 02 §5.1). */
   rules: RuleSlot[];
   /** Gate-approved nudge directive (0–1). Filled by awareness + gates (P2). */
@@ -175,6 +206,25 @@ function renderLoops(loops: LoopLine[]): string {
     return `- ${l.title}${due}`;
   });
   return ["Open threads:", ...lines].join("\n");
+}
+/**
+ * Render pending reminders. These are stated as fact — unlike loops, the user
+ * explicitly set them, so the agent can answer "what's on my plate" directly
+ * without searching. Overdue items are marked so it doesn't describe a missed
+ * reminder as upcoming.
+ */
+function renderReminders(reminders: ReminderLine[], now: Date): string {
+  const lines = reminders.map((r) => {
+    const when = r.dueAt.toISOString().slice(0, 16).replace("T", " ");
+    const overdue = r.dueAt.getTime() < now.getTime() ? " — OVERDUE" : "";
+    const repeat = r.recurrence !== "once" ? ` [${r.recurrence}]` : "";
+    return `- ${r.text} (due ${when}${overdue})${repeat}`;
+  });
+  return [
+    "Reminders they've set (pending — these are real, already-scheduled commitments, not guesses):",
+    ...lines,
+    "You may answer questions about these directly from this list; no search needed. Do not create a reminder that duplicates one already here.",
+  ].join("\n");
 }
 function renderNudge(nudge: NudgeDirective): string {
   const refs = nudge.evidence.length ? ` Evidence: ${nudge.evidence.join(", ")}.` : "";
@@ -251,18 +301,26 @@ function truncateBlock(block: string, maxTokens: number): string | null {
 /**
  * Assemble + budget the pack text from raw slots. Pure and DB-free so the budget
  * invariant is unit-testable without a database. Slots are filled in priority
- * order (rules > nudge > loops > digest > profile); the overflowing slot is
- * hard-truncated and lower-priority slots are dropped. A final clamp guarantees
- * the returned text never exceeds the budget regardless of heuristic drift.
+ * order (rules > nudge > reminders > loops > digest > profile); the overflowing
+ * slot is hard-truncated and lower-priority slots are dropped. A final clamp
+ * guarantees the returned text never exceeds the budget regardless of drift.
+ *
+ * @param now injectable clock, used only to mark overdue reminders.
  */
 export function buildContextPackText(
   slots: ContextPackSlots,
   budget = CONTEXT_PACK_TOKEN_BUDGET,
+  now: Date = new Date(),
 ): { text: string; estimatedTokens: number } {
   // (key, rendered block) in PRIORITY order (highest first). Empty slots absent.
   const byPriority: Array<{ key: keyof ContextPackSlots; block: string }> = [];
   if (slots.rules.length) byPriority.push({ key: "rules", block: renderRules(slots.rules) });
   if (slots.nudge) byPriority.push({ key: "nudge", block: renderNudge(slots.nudge) });
+  if (slots.reminders && slots.reminders.length)
+    byPriority.push({
+      key: "reminders",
+      block: renderReminders(slots.reminders, now),
+    });
   if (slots.loops.length) byPriority.push({ key: "loops", block: renderLoops(slots.loops) });
   if (slots.entityContext?.text)
     byPriority.push({
@@ -298,6 +356,7 @@ export function buildContextPackText(
     "profile",
     "weekDigest",
     "rules",
+    "reminders",
     "loops",
     "entityContext",
     "onYourMind",
@@ -345,10 +404,11 @@ export async function assembleContextPack(
   } = params;
   const within = new Date(now.getTime() + horizonDays * DAY_MS);
 
-  const [profile, weekDigest, dueLoops] = await Promise.all([
+  const [profile, weekDigest, dueLoops, dueReminders] = await Promise.all([
     getDigest(userId, "profile"),
     getDigest(userId, "week"),
     getDueOpenLoops(userId, within),
+    getDueReminders(userId, within, REMINDER_CAP),
   ]);
 
   const loops: LoopLine[] = dueLoops.map((l) => ({
@@ -357,11 +417,29 @@ export async function assembleContextPack(
     title: l.title,
     dueAt: l.dueAt,
   }));
+  const reminders: ReminderLine[] = dueReminders.map((r) => ({
+    id: r.id,
+    text: r.text,
+    dueAt: r.dueAt,
+    recurrence: r.recurrence,
+    origin: r.origin,
+  }));
   const rules: RuleSlot[] = matchedRules;
   // Nudge is filled by the agent after the awareness pass + gates (spec 02 §5.4).
   const nudge: NudgeDirective | null = null;
 
-  const slots: ContextPackSlots = { profile, weekDigest, loops, rules, nudge };
-  const { text, estimatedTokens } = buildContextPackText(slots);
+  const slots: ContextPackSlots = {
+    profile,
+    weekDigest,
+    loops,
+    reminders,
+    rules,
+    nudge,
+  };
+  const { text, estimatedTokens } = buildContextPackText(
+    slots,
+    CONTEXT_PACK_TOKEN_BUDGET,
+    now,
+  );
   return { ...slots, text, estimatedTokens };
 }

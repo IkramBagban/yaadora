@@ -9,6 +9,7 @@ beforeAll(() => {
   mock.module("@repo/db", () => ({
     getDigest: async () => null,
     getDueOpenLoops: async () => [],
+    getDueReminders: async () => [],
   }));
 
   const mod = require("./context-pack");
@@ -189,6 +190,142 @@ test("clamp holds with a grossly oversized entity context slot", () => {
     entityContext: { text: huge, entityIds: ["e1"], receipts: [] },
   };
   const { text, estimatedTokens } = buildContextPackText(slots);
+  expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+  expect(estimateTokens(text)).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+});
+
+// ---------------------------------------------------------------------------
+// Reminders slot. Reminders are commitments the user actually made, so they
+// outrank inferred open loops and must never be silently dropped in favour of
+// one — that's the whole reason the slot exists.
+// ---------------------------------------------------------------------------
+
+const NOW = new Date("2026-07-26T12:00:00.000Z");
+
+function reminder(text: string, hoursFromNow: number, recurrence = "once") {
+  return {
+    id: `rem-${text}`,
+    text,
+    dueAt: new Date(NOW.getTime() + hoursFromNow * 60 * 60 * 1000),
+    recurrence,
+    origin: "manual",
+  };
+}
+
+test("renders pending reminders as a distinct section", () => {
+  const slots: ContextPackSlots = {
+    profile: null,
+    weekDigest: null,
+    loops: [],
+    reminders: [reminder("Call the bank", 24)],
+    rules: [],
+    nudge: null,
+  };
+  const { text } = buildContextPackText(slots, CONTEXT_PACK_TOKEN_BUDGET, NOW);
+  expect(text).toContain("Reminders they've set");
+  expect(text).toContain("Call the bank");
+  // Must not be conflated with inferred loops.
+  expect(text).not.toContain("Open threads:");
+});
+
+test("marks overdue reminders so the agent does not call them upcoming", () => {
+  const slots: ContextPackSlots = {
+    profile: null,
+    weekDigest: null,
+    loops: [],
+    reminders: [reminder("Renew passport", -48), reminder("Dentist", 24)],
+    rules: [],
+    nudge: null,
+  };
+  const { text } = buildContextPackText(slots, CONTEXT_PACK_TOKEN_BUDGET, NOW);
+  const overdueLine = text
+    .split("\n")
+    .find((l) => l.includes("Renew passport"))!;
+  const futureLine = text.split("\n").find((l) => l.includes("Dentist"))!;
+  expect(overdueLine).toContain("OVERDUE");
+  expect(futureLine).not.toContain("OVERDUE");
+});
+
+test("shows the repeat rule for recurring reminders only", () => {
+  const slots: ContextPackSlots = {
+    profile: null,
+    weekDigest: null,
+    loops: [],
+    reminders: [reminder("Take meds", 12, "daily"), reminder("Dentist", 24)],
+    rules: [],
+    nudge: null,
+  };
+  const { text } = buildContextPackText(slots, CONTEXT_PACK_TOKEN_BUDGET, NOW);
+  expect(text).toContain("[daily]");
+  expect(text).not.toContain("[once]");
+});
+
+test("omits the section entirely when there are no reminders", () => {
+  const slots: ContextPackSlots = {
+    profile: "P",
+    weekDigest: null,
+    loops: [],
+    reminders: [],
+    rules: [],
+    nudge: null,
+  };
+  const { text } = buildContextPackText(slots, CONTEXT_PACK_TOKEN_BUDGET, NOW);
+  expect(text).not.toContain("Reminders they've set");
+});
+
+test("is backward compatible with slots that omit reminders", () => {
+  const slots: ContextPackSlots = {
+    profile: "P",
+    weekDigest: null,
+    loops: [],
+    rules: [],
+    nudge: null,
+  };
+  const { text } = buildContextPackText(slots, CONTEXT_PACK_TOKEN_BUDGET, NOW);
+  expect(text).toContain("About the user: P");
+});
+
+test("reminders outrank open loops under budget pressure", () => {
+  const slots: ContextPackSlots = {
+    profile: null,
+    weekDigest: null,
+    loops: [
+      {
+        id: "loop-1",
+        kind: "upcoming_event",
+        title: "LOOP_MARKER " + bigText(CONTEXT_PACK_TOKEN_BUDGET * 2),
+        dueAt: null,
+      },
+    ],
+    reminders: [reminder("REMINDER_MARKER", 24)],
+    rules: [],
+    nudge: null,
+  };
+  const { text, estimatedTokens } = buildContextPackText(
+    slots,
+    CONTEXT_PACK_TOKEN_BUDGET,
+    NOW,
+  );
+  expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
+  expect(text).toContain("REMINDER_MARKER");
+});
+
+test("stays under budget with a huge reminder list", () => {
+  const slots: ContextPackSlots = {
+    profile: bigText(CONTEXT_PACK_TOKEN_BUDGET * 4),
+    weekDigest: bigText(CONTEXT_PACK_TOKEN_BUDGET * 4),
+    loops: [],
+    reminders: Array.from({ length: 200 }, (_, i) =>
+      reminder(bigText(300) + i, i),
+    ),
+    rules: [],
+    nudge: null,
+  };
+  const { text, estimatedTokens } = buildContextPackText(
+    slots,
+    CONTEXT_PACK_TOKEN_BUDGET,
+    NOW,
+  );
   expect(estimatedTokens).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
   expect(estimateTokens(text)).toBeLessThanOrEqual(CONTEXT_PACK_TOKEN_BUDGET);
 });

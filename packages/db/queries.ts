@@ -1226,6 +1226,126 @@ export async function getDueOpenLoops(
 }
 
 // ---------------------------------------------------------------------------
+// Reminders, read side (spec 01 §3.6).
+//
+// `open_loops` are LLM-inferred commitments; `reminders` are the user-facing
+// scheduled items the Reminders tab shows, carrying accept/dismiss state. The
+// Ask agent needs the latter — both to answer "what's on my plate" and to avoid
+// creating a duplicate of a reminder that already exists.
+// ---------------------------------------------------------------------------
+
+export interface ReminderRow {
+  id: string;
+  text: string;
+  dueAt: Date;
+  status: string;
+  origin: string;
+  recurrence: string;
+}
+
+/**
+ * Pending reminders due at or before `within`, soonest first.
+ *
+ * Past-due pending reminders are included: an overdue reminder is the most
+ * relevant thing the user could be asked about, and hiding it would let the
+ * agent claim there's nothing outstanding when there is.
+ *
+ * `status = 'suggested'` is deliberately excluded — an unconfirmed suggestion
+ * is not yet a commitment the user has made, and treating it as one is exactly
+ * the "app decides on your behalf" behaviour the product avoids.
+ */
+export async function getDueReminders(
+  userId: string,
+  within: Date,
+  limit = 20,
+): Promise<ReminderRow[]> {
+  // Bind as ISO text — a raw Date can serialize as a non-timestamp string
+  // under postgres.js and silently fail the comparison (same as open loops).
+  const withinIso = within.toISOString();
+  const rows = await db.execute(sql`
+    SELECT id, text, due_at, status, origin, recurrence
+    FROM reminders
+    WHERE user_id = ${userId}
+      AND status = 'pending'
+      AND due_at <= ${withinIso}::timestamptz
+    ORDER BY due_at ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map(toReminderRow);
+}
+
+/**
+ * Reminders matching a free-text query, for the agent's `search_reminders`.
+ *
+ * Deliberately ILIKE rather than full-text: reminders are short, literal
+ * strings ("call the bank"), there's no tsvector column on the table, and the
+ * agent is usually checking for a near-exact restatement of something it or the
+ * user just said. Stemming would buy little and cost a migration.
+ *
+ * @param statuses which lifecycle states to include. Defaults to pending only.
+ */
+export async function searchReminders(
+  userId: string,
+  query: string,
+  opts: { statuses?: string[]; limit?: number } = {},
+): Promise<ReminderRow[]> {
+  const statuses = opts.statuses?.length ? opts.statuses : ["pending"];
+  const limit = opts.limit ?? 20;
+  const trimmed = query.trim();
+
+  // An empty query means "show me everything in these states", not "match ''".
+  const pattern = trimmed.length > 0 ? `%${trimmed}%` : "%";
+
+  const rows = await db.execute(sql`
+    SELECT id, text, due_at, status, origin, recurrence
+    FROM reminders
+    WHERE user_id = ${userId}
+      AND status = ANY(${statuses})
+      AND text ILIKE ${pattern}
+    ORDER BY due_at ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map(toReminderRow);
+}
+
+/**
+ * Pending reminders whose due time falls within `windowHours` of `dueAt`.
+ * Used as the duplicate guard before inserting: "remind me to call mom Sunday"
+ * twice should not produce two rows.
+ */
+export async function findNearbyPendingReminders(
+  userId: string,
+  dueAt: Date,
+  windowHours = 24,
+  limit = 10,
+): Promise<ReminderRow[]> {
+  const dueIso = dueAt.toISOString();
+  const rows = await db.execute(sql`
+    SELECT id, text, due_at, status, origin, recurrence
+    FROM reminders
+    WHERE user_id = ${userId}
+      AND status = 'pending'
+      AND due_at BETWEEN
+        ${dueIso}::timestamptz - make_interval(hours => ${windowHours})
+        AND ${dueIso}::timestamptz + make_interval(hours => ${windowHours})
+    ORDER BY due_at ASC
+    LIMIT ${limit}
+  `);
+  return asRows(rows).map(toReminderRow);
+}
+
+function toReminderRow(r: Record<string, unknown>): ReminderRow {
+  return {
+    id: String(r.id),
+    text: String(r.text),
+    dueAt: new Date(r.due_at as string),
+    status: String(r.status),
+    origin: String(r.origin),
+    recurrence: String(r.recurrence ?? "once"),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Graph doorway (spec 02 §5.2) — turn-time entity linking + entity-context
 // assembly. Raw SQL lives HERE in @repo/db; the linking DECISION + assembler
 // orchestration live in @repo/core/retrieval.
