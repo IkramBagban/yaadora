@@ -44,6 +44,7 @@ import {
   cancelReminder,
 } from "./routes/reminders";
 import { getMe, patchMe } from "./routes/me";
+import { transcribe } from "./routes/transcribe";
 
 // Declare this process's log target FIRST — every log line (including those
 // emitted deep inside @repo/core) is written to logs/server.log in development.
@@ -108,6 +109,10 @@ const server = Bun.serve({
     },
     "/ask": {
       POST: (req) => ask(req),
+    },
+    // Speech-to-text. Stateless: audio in, text out, nothing stored.
+    "/transcribe": {
+      POST: (req) => transcribe(req),
     },
     // Durable conversations (spec 02 §8, P0 item 2)
     "/conversations": {

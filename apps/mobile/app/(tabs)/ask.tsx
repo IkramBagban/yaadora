@@ -23,6 +23,9 @@ import { AskExchange } from '../../src/components/AskExchange';
 import { PressableScale } from '../../src/components/PressableScale';
 import { SuggestionChip } from '../../src/components/SuggestionChip';
 import { Toast } from '../../src/components/Toast';
+import { VoiceButton } from '../../src/components/VoiceInput';
+import { appendTranscript } from '../../src/voice/appendTranscript';
+import { useVoiceCapture } from '../../src/voice/useVoiceCapture';
 import { useKeyboardVisible } from '../../src/lib/useKeyboardVisible';
 import { durations } from '../../src/theme/motion';
 import { hairlineWidth, radius, space, typeScale } from '../../src/theme/tokens';
@@ -58,6 +61,21 @@ export default function AskScreen() {
 
   const { exchanges, streaming, send, retry, cancel, reset } = useAskSession();
   const hasSession = exchanges.length > 0;
+
+  /**
+   * Voice fills the composer; it never auto-sends. Asking is cheap to redo but
+   * a half-heard question wastes a retrieval round-trip and reads as the app
+   * mishearing the user — better to let them glance at it first.
+   */
+  const [interim, setInterim] = useState('');
+  const voice = useVoiceCapture({
+    onTranscript: (transcript) => {
+      setInterim('');
+      setDraft((current) => appendTranscript(current, transcript));
+      inputRef.current?.focus();
+    },
+    onInterim: setInterim,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -233,7 +251,15 @@ export default function AskScreen() {
                 ref={inputRef}
                 value={draft}
                 onChangeText={setDraft}
-                placeholder={hasSession ? 'Ask a follow-up…' : 'Ask anything…'}
+                placeholder={
+                  voice.status === 'recording'
+                    ? 'Listening…'
+                    : interim.length > 0
+                      ? interim
+                      : hasSession
+                        ? 'Ask a follow-up…'
+                        : 'Ask anything…'
+                }
                 placeholderTextColor={colors.ink3}
                 keyboardAppearance={dark ? 'dark' : 'light'}
                 selectionColor={colors.accent}
@@ -260,6 +286,17 @@ export default function AskScreen() {
                 >
                   <View style={[styles.stopSquare, { backgroundColor: colors.ink2 }]} />
                 </PressableScale>
+              ) : draft.trim().length === 0 && !voice.isActive ? (
+                // Empty composer: the mic is the primary action, since dictating
+                // a question is the whole point of having it here.
+                <Animated.View
+                  entering={FadeIn.duration(durations.quick)}
+                  exiting={FadeOut.duration(durations.quick)}
+                >
+                  <VoiceButton voice={voice} size={36} />
+                </Animated.View>
+              ) : voice.isActive ? (
+                <VoiceButton voice={voice} size={36} />
               ) : (
                 <Animated.View
                   entering={FadeIn.duration(durations.quick)}
@@ -268,14 +305,11 @@ export default function AskScreen() {
                   <PressableScale
                     accessibilityRole="button"
                     accessibilityLabel="Ask"
-                    disabled={draft.trim().length === 0}
                     onPress={() => submit()}
                     hitSlop={8}
                     style={[styles.sendButton, { backgroundColor: colors.accent }]}
                   >
-                    <View style={{ opacity: draft.trim().length === 0 ? 0.5 : 1 }}>
-                      <Feather name="arrow-up" size={16} color={colors.onAccent} />
-                    </View>
+                    <Feather name="arrow-up" size={16} color={colors.onAccent} />
                   </PressableScale>
                 </Animated.View>
               )}

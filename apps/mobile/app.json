@@ -49,7 +49,21 @@
         }
       ],
       "@clerk/expo",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Yaadora uses the microphone so you can speak a memory instead of typing it. Audio is turned into text and never stored."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Yaadora uses the microphone so you can speak a memory instead of typing it.",
+          "speechRecognitionPermission": "Yaadora uses speech recognition to turn what you say into text on your device.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

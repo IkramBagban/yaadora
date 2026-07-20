@@ -12,10 +12,13 @@ import { newClientId } from '../lib/ids';
  * `useOutbox` bridges it into React via useSyncExternalStore.
  */
 
+/** How the text got here. 'voice' means it was dictated, then proofread. */
+export type CaptureSource = 'manual' | 'voice';
+
 export interface OutboxItem {
   clientId: string;
   rawText: string;
-  source: 'manual';
+  source: CaptureSource;
   createdAt: string;
   attempts: number;
   lastError?: string;
@@ -93,11 +96,14 @@ export async function hydrateOutbox(): Promise<void> {
 }
 
 /** Local-first save. Returns immediately; sync happens in the background. */
-export function enqueueMemory(rawText: string): OutboxItem {
+export function enqueueMemory(
+  rawText: string,
+  source: CaptureSource = 'manual',
+): OutboxItem {
   const item: OutboxItem = {
     clientId: newClientId(), // generating new UUID
     rawText,
-    source: 'manual',
+    source,
     createdAt: new Date().toISOString(),
     attempts: 0,
   };

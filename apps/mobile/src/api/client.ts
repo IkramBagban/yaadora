@@ -161,11 +161,91 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Multipart upload — bypasses `request` because that helper forces a JSON
+ * content-type, and multipart needs the runtime to set its own boundary.
+ * Takes its own timeout: transcription is slower than a CRUD call.
+ */
+async function upload<T>(
+  path: string,
+  form: FormData,
+  timeoutMs: number,
+): Promise<T> {
+  const started = Date.now();
+
+  const auth = await authHeaders();
+  if (!auth.authorization) {
+    throw new ApiError('Sign in to continue.', 'unauthorized', 401);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: 'POST',
+      // Deliberately no content-type: fetch sets multipart boundary itself.
+      headers: auth,
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const ms = Date.now() - started;
+    const originalError = err instanceof Error ? err.message : String(err);
+    log.error('upload network failure', { path, ms, message: originalError });
+    throw new ApiError("Can't reach your memories right now.", 'network', null, {
+      url: `${API_URL}${path}`,
+      method: 'POST',
+      status: null,
+      code: 'network',
+      originalError,
+      durationMs: ms,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    let message = `Request failed (${res.status}).`;
+    let code = 'http_error';
+    let responseBody: unknown = null;
+    try {
+      const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      responseBody = body;
+      if (body.error?.message) message = body.error.message;
+      if (body.error?.code) code = body.error.code;
+    } catch {
+      // non-JSON error body; keep defaults
+    }
+    const ms = Date.now() - started;
+    log.warn('upload failed', { path, status: res.status, code, ms });
+    throw new ApiError(message, code, res.status, {
+      url: `${API_URL}${path}`,
+      method: 'POST',
+      status: res.status,
+      code,
+      responseBody,
+      durationMs: ms,
+    });
+  }
+
+  log.info('upload ok', { path, status: res.status, ms: Date.now() - started });
+  return (await res.json()) as T;
+}
+
 export interface MeProfile {
   id: string;
   email: string;
   timezone: string;
   createdAt: string;
+}
+
+export interface TranscriptionResult {
+  text: string;
+  model: string | null;
+  language: string | null;
+  empty?: boolean;
 }
 
 export interface ConversationSummary {
@@ -267,6 +347,35 @@ export const api = {
     id: string,
   ): Promise<{ id: string; memories: SurfacingEvidenceMemory[] }> {
     return request(`/surfacings/${encodeURIComponent(id)}/evidence`);
+  },
+
+  /**
+   * Speech-to-text. Audio is sent, transcribed, and discarded server-side —
+   * nothing is stored. A 503 (`transcription_unavailable`) is the signal to
+   * fall back to on-device recognition, not an error to show the user.
+   */
+  transcribe(input: {
+    uri: string;
+    mimeType: string;
+    filename: string;
+    language?: string;
+    timeoutMs?: number;
+  }): Promise<TranscriptionResult> {
+    const form = new FormData();
+    // React Native's FormData takes this {uri, name, type} shape for files.
+    form.append('audio', {
+      uri: input.uri,
+      name: input.filename,
+      type: input.mimeType,
+    } as unknown as Blob);
+    form.append('filename', input.filename);
+    if (input.language) form.append('language', input.language);
+
+    return upload<TranscriptionResult>(
+      '/transcribe',
+      form,
+      input.timeoutMs ?? 20000,
+    );
   },
 
   createMemory(input: {

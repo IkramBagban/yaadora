@@ -29,6 +29,9 @@ import { PressableScale } from '../../src/components/PressableScale';
 import { QuickChips } from '../../src/components/QuickChips';
 import { StatusPill } from '../../src/components/StatusPill';
 import { Toast } from '../../src/components/Toast';
+import { VoiceButton } from '../../src/components/VoiceInput';
+import { appendTranscript } from '../../src/voice/appendTranscript';
+import { useVoiceCapture } from '../../src/voice/useVoiceCapture';
 import { todayHeading } from '../../src/lib/time';
 import { useKeyboardVisible } from '../../src/lib/useKeyboardVisible';
 import { durations, springs } from '../../src/theme/motion';
@@ -62,8 +65,12 @@ export default function CaptureScreen() {
   const keyboardVisible = useKeyboardVisible();
 
   const [text, setText] = useState('');
+  const [interim, setInterim] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [buttonFlash, setButtonFlash] = useState(false);
+  // Tracks whether the current draft came from dictation, so the memory is
+  // tagged source='voice'. Reset on save.
+  const [dictated, setDictated] = useState(false);
   const [placeholder] = useState(
     () => PROMPTS[Math.floor(Math.random() * PROMPTS.length)]!,
   );
@@ -73,7 +80,20 @@ export default function CaptureScreen() {
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commit = useSharedValue(0);
 
-  const showRecent = !keyboardVisible && text.length === 0;
+  // Voice is an input method for this box, not a separate capture path: the
+  // transcript lands in the editor and the user proofreads before saving.
+  const voice = useVoiceCapture({
+    onTranscript: (transcript) => {
+      setInterim('');
+      setDictated(true);
+      setText((current) => appendTranscript(current, transcript));
+      inputRef.current?.focus();
+    },
+    onInterim: setInterim,
+  });
+
+  const showRecent =
+    !keyboardVisible && text.length === 0 && !voice.isActive;
   const recent = useRecentMemories(showRecent);
   const { items, blockedError, lastErrorDetails } = useOutbox();
   const lastError = items[0]?.lastError;
@@ -109,12 +129,13 @@ export default function CaptureScreen() {
     if (!value) return;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    enqueueMemory(value);
+    enqueueMemory(value, dictated ? 'voice' : 'manual');
 
     // The words settle downward — deposited — then the page is blank again.
     commit.value = withTiming(1, { duration: durations.fade });
     setTimeout(() => {
       setText('');
+      setDictated(false);
       commit.value = withSpring(0, springs.gentle);
     }, durations.fade + 10);
 
@@ -184,7 +205,7 @@ export default function CaptureScreen() {
                 style={styles.placeholder}
               >
                 <AppText style={[EDITOR_FONT, { color: colors.ink3 }]}>
-                  {placeholder}
+                  {voice.status === 'recording' ? 'Listening…' : placeholder}
                 </AppText>
               </Animated.View>
             )}
@@ -199,6 +220,20 @@ export default function CaptureScreen() {
               style={[styles.input, EDITOR_FONT, { color: colors.ink }]}
               accessibilityLabel="New memory"
             />
+            {/* Live dictation preview. Ghosted and outside the editor so it
+                never reads as text the user has already kept — it lands in the
+                input only when recognition finalises it. */}
+            {interim.length > 0 && (
+              <Animated.View
+                pointerEvents="none"
+                entering={FadeIn.duration(durations.quick)}
+                exiting={FadeOut.duration(durations.quick)}
+              >
+                <AppText style={[EDITOR_FONT, { color: colors.ink3 }]}>
+                  {interim}
+                </AppText>
+              </Animated.View>
+            )}
           </Animated.View>
 
           {showRecent && (
@@ -239,11 +274,14 @@ export default function CaptureScreen() {
             ) : (
               <View />
             )}
-            <SaveButton
-              disabled={text.trim().length === 0}
-              flash={buttonFlash}
-              onPress={save}
-            />
+            <View style={styles.actions}>
+              <VoiceButton voice={voice} />
+              <SaveButton
+                disabled={text.trim().length === 0}
+                flash={buttonFlash}
+                onPress={save}
+              />
+            </View>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -340,6 +378,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingTop: space.md,
+  },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
   },
   saveButton: {
     width: 84,
