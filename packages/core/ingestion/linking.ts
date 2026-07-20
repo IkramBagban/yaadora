@@ -118,13 +118,15 @@ async function disambiguate(
   mention: MentionInput,
   candidates: { id: string; canonicalName: string; profile: string | null }[],
 ): Promise<string | null> {
-  const { object } = await generateObject({
-    model: ingestionModel, // tiny, rare call — keep it on the cheap tier (cost discipline)
-    schema: DisambiguationSchema,
-    system:
-      "Pick which existing entity a mention refers to, or decide it is new. " +
-      "Return the exact entityId of the best match, or null if none matches.",
-    prompt: `Memory context:
+  try {
+    const { object } = await generateObject({
+      model: ingestionModel, // tiny, rare call — keep it on the cheap tier (cost discipline)
+      schema: DisambiguationSchema,
+      system:
+        "Pick which existing entity a mention refers to, or decide it is new. " +
+        "Return a JSON object {\"entityId\": \"...\"} with the exact entityId of the best match, " +
+        "or {\"entityId\": null} if none matches. Never return bare null.",
+      prompt: `Memory context:
 """
 ${memoryText}
 """
@@ -139,12 +141,23 @@ ${candidates
   .join("\n")}
 
 Which entityId does the mention refer to? null if it is a new/different entity.`,
-  });
-  // Guard: only accept an id that was actually offered.
-  if (object.entityId && candidates.some((c) => c.id === object.entityId)) {
-    return object.entityId;
+      experimental_repairText: async ({ text }) => {
+        const t = text.trim();
+        if (t === "null" || t === "") return '{"entityId":null}';
+        const fenced = t.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+        return (fenced?.[1] ?? t).trim();
+      },
+    });
+    // Guard: only accept an id that was actually offered.
+    if (object.entityId && candidates.some((c) => c.id === object.entityId)) {
+      return object.entityId;
+    }
+    return null;
+  } catch {
+    // Proxy models sometimes return bare null / invalid JSON. Safer default:
+    // treat as no match and create a new entity rather than failing ingestion.
+    return null;
   }
-  return null;
 }
 
 async function createEntity(

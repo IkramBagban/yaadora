@@ -37,3 +37,31 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Runtime logs (initLogging writes here in dev — can contain memory text + tokens)
+logs/
+*.log
+
+# Scratch / debug dumps
+*.txt
+!**/requirements.txt
+rsc_data.txt
+vm-logs.txt
+eas_build_clean.txt
+build_page.html
+packages/core/scratch*.ts
+query_memories.ts
+run-backfill*.js
+test-concurrency*.test.ts
+test-mock*.test.ts
+
+# Build artifacts
+*.apk
+*.aab
+*.ipa
+
+# Docs / notes stay local (CLAUDE.md: never commit .md files).
+# Already-tracked files like README.md are unaffected by this.
+docs/
+*.md
+!README.md

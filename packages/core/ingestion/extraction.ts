@@ -10,40 +10,71 @@ import { ingestionModel } from "../ai/models";
  * model. Never parse free-form text. This keeps cost per memory near-zero
  * (spec 02 §9, cost discipline).
  */
+// Enums use .catch(...) so slightly-off values from proxy models (esp. Gemini
+// via CLIProxy, which sometimes ignores strict json_schema) still parse into
+// a valid Extraction instead of failing the whole memory.
+const MEMORY_TYPES = [
+  "episodic",
+  "semantic",
+  "preference",
+  "intent",
+  "reflection",
+] as const;
+const ENTITY_TYPES = [
+  "person",
+  "place",
+  "org",
+  "topic",
+  "project",
+  "event",
+] as const;
+const FACT_TYPES = ["semantic", "preference", "intent", "episodic"] as const;
+const LOOP_KINDS = [
+  "commitment",
+  "unresolved_conflict",
+  "upcoming_event",
+  "goal",
+  "thread",
+] as const;
+
 export const ExtractionSchema = z.object({
   // ISO 8601; resolved against the memory's createdAt + user timezone. null if
   // the memory carries no discernible event time (spec 02 §2.1).
-  occurredAt: z.string().nullable(),
+  occurredAt: z.string().nullable().catch(null),
   types: z
+    .array(z.enum(MEMORY_TYPES).catch("episodic"))
+    .min(1)
+    .catch(["episodic"]),
+  entities: z
     .array(
-      z.enum(["episodic", "semantic", "preference", "intent", "reflection"]),
+      z.object({
+        surface: z.string(), // as written ("Urhan")
+        type: z.enum(ENTITY_TYPES).catch("topic"),
+        canonicalGuess: z.string(), // normalized ("Urhan")
+      }),
     )
-    .min(1),
-  entities: z.array(
-    z.object({
-      surface: z.string(), // as written ("Urhan")
-      type: z.enum(["person", "place", "org", "topic", "project", "event"]),
-      canonicalGuess: z.string(), // normalized ("Urhan")
-    }),
-  ),
-  facts: z.array(
-    z.object({
-      subject: z.string(), // entity surface or "user"
-      predicate: z.string(),
-      object: z.string(),
-      factText: z.string(), // natural-language atomic statement
-      validFrom: z.string().nullable(),
-      factType: z.enum(["semantic", "preference", "intent", "episodic"]),
-      confidence: z.number().min(0).max(1),
-    }),
-  ),
+    .catch([]),
+  facts: z
+    .array(
+      z.object({
+        subject: z.string(), // entity surface or "user"
+        predicate: z.string(),
+        object: z.string(),
+        factText: z.string(), // natural-language atomic statement
+        validFrom: z.string().nullable().catch(null),
+        factType: z.enum(FACT_TYPES).catch("episodic"),
+        confidence: z.number().min(0).max(1).catch(0.7),
+      }),
+    )
+    .catch([]),
   intent: z
     .object({
-      hasFutureAction: z.boolean(),
-      dueAt: z.string().nullable(),
-      text: z.string().nullable(),
+      hasFutureAction: z.boolean().catch(false),
+      dueAt: z.string().nullable().catch(null),
+      text: z.string().nullable().catch(null),
     })
-    .nullable(),
+    .nullable()
+    .catch(null),
   // Procedural memory is deliberately separate from a preference: it must tell
   // the system how to behave when a concrete situation occurs.
   standingRule: z
@@ -51,26 +82,21 @@ export const ExtractionSchema = z.object({
       ruleText: z.string().min(1),
       triggerText: z.string().min(1),
     })
-    .nullable(),
-  openLoops: z.array(
-    z.object({
-      kind: z.enum([
-        "commitment",
-        "unresolved_conflict",
-        "upcoming_event",
-        "goal",
-        // A significant moment a good friend would follow up on later
-        // (spec 04 §3.1/§3.2). General by construction — no scenario taxonomy.
-        "thread",
-      ]),
-      title: z.string().min(1),
-      // An entity is optional in storage; preserve that distinction rather than
-      // inventing a link when the memory does not name one.
-      entityRef: z.string().nullable(),
-      dueAt: z.string().nullable(),
-    }),
-  ),
-  resolvesLoop: z.string().min(1).nullable(),
+    .nullable()
+    .catch(null),
+  openLoops: z
+    .array(
+      z.object({
+        kind: z.enum(LOOP_KINDS).catch("thread"),
+        title: z.string().min(1),
+        // An entity is optional in storage; preserve that distinction rather than
+        // inventing a link when the memory does not name one.
+        entityRef: z.string().nullable().catch(null),
+        dueAt: z.string().nullable().catch(null),
+      }),
+    )
+    .catch([]),
+  resolvesLoop: z.string().min(1).nullable().catch(null),
 });
 
 export type Extraction = z.infer<typeof ExtractionSchema>;
@@ -153,6 +179,20 @@ function formatNow(createdAt: Date, timezone: string): string {
  * Stage 2.1–2.4: the single structured-extraction call (spec 02 §2).
  * Pure-ish: takes a memory's text + context, returns the parsed Extraction.
  */
+/** Strip markdown fences / extract first JSON object — proxy models often wrap. */
+function stripJsonFences(text: string): string {
+  let t = text.trim();
+  const fenced = t.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+  if (fenced?.[1]) t = fenced[1].trim();
+  // If still not pure JSON, take outermost object
+  if (!t.startsWith("{")) {
+    const start = t.indexOf("{");
+    const end = t.lastIndexOf("}");
+    if (start >= 0 && end > start) t = t.slice(start, end + 1);
+  }
+  return t.trim();
+}
+
 export async function extract(ctx: ExtractionContext): Promise<Extraction> {
   const { object } = await generateObject({
     model: ingestionModel,
@@ -164,6 +204,9 @@ Raw memory:
 """
 ${ctx.rawText}
 """`,
+    // CLIProxy + some Gemini models return ```json ... ``` or slightly invalid
+    // JSON even when json_schema is requested. Repair before schema validation.
+    experimental_repairText: async ({ text }) => stripJsonFences(text),
   });
   return object;
 }
