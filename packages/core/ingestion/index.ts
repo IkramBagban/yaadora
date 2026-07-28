@@ -1,6 +1,12 @@
 // The ingestion pipeline (spec 02 §2). One `runIngestion(memoryId)` entrypoint
-// for the worker; the stage functions are exported for testing/reuse.
-export { runIngestion, markMemoryFailed } from "./pipeline";
+// for the worker.
+//
+// The individual stages (./embeddings, ./facts, ./loops, ./memory-record,
+// ./reminders, ./rules, ./temporal) are deliberately NOT re-exported here —
+// they are internals of the pipeline, and tests that need one import its module
+// directly. Keep this barrel to what consumers outside the package actually use.
+export { runIngestion } from "./pipeline";
+export { markMemoryFailed } from "./memory-record";
 export { extract, ExtractionSchema } from "./extraction";
 export type { Extraction, ExtractionContext } from "./extraction";
 export {

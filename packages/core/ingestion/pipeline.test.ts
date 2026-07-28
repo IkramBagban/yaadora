@@ -66,10 +66,10 @@ beforeAll(() => {
   const extractionMod = require("./extraction");
   ExtractionSchema = extractionMod.ExtractionSchema;
   
-  const pipelineMod = require("./pipeline");
-  resolveOpenLoop = pipelineMod.resolveOpenLoop;
-  upsertOpenLoops = pipelineMod.upsertOpenLoops;
-  upsertStandingRule = pipelineMod.upsertStandingRule;
+  const loopsMod = require("./loops");
+  resolveOpenLoop = loopsMod.resolveOpenLoop;
+  upsertOpenLoops = loopsMod.upsertOpenLoops;
+  upsertStandingRule = require("./rules").upsertStandingRule;
 });
 
 afterAll(() => {

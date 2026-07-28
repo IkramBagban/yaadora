@@ -108,6 +108,19 @@ export interface MentionInput {
  * entity id, so fact subject/object surfaces can be resolved to graph nodes. */
 export type EntityResolution = Map<string, string>;
 
+/** Resolve a fact subject/object surface to an entity id, or null (literal or
+ * "user"). */
+export function resolveEntity(
+  surface: string,
+  resolution: EntityResolution,
+): string | null {
+  const key = surface.trim().toLowerCase();
+  if (key === "user" || key === "i" || key === "me" || key === "myself") {
+    return null;
+  }
+  return resolution.get(key) ?? null;
+}
+
 const DisambiguationSchema = z.object({
   // id of the chosen existing entity, or null to create a new one.
   entityId: z.string().nullable(),
@@ -275,4 +288,27 @@ export async function linkEntities(params: {
   }
 
   return resolution;
+}
+
+/**
+ * Step 5 of the ingestion pipeline — pairs each extracted entity with the
+ * embedding batch position it was given, then links the batch. A thin adapter
+ * so the pipeline never has to build `MentionInput` by hand.
+ */
+export async function linkExtractedEntities(params: {
+  userId: string;
+  memoryId: string;
+  entities: Extraction["entities"];
+  embeddings: number[][];
+  occurredAt: Date | null;
+  memoryText: string;
+}): Promise<EntityResolution> {
+  const { userId, memoryId, entities, embeddings, occurredAt, memoryText } = params;
+  const mentions: MentionInput[] = entities.map((e, i) => ({
+    surface: e.surface,
+    type: e.type,
+    canonicalGuess: e.canonicalGuess,
+    embedding: embeddings[i] ?? [],
+  }));
+  return linkEntities({ userId, memoryId, mentions, occurredAt, memoryText });
 }

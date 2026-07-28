@@ -17,7 +17,7 @@ import {
   expireStaleOpenLoops,
 } from "@repo/db";
 import { selectFollowUps } from "@repo/core";
-import { resolveOpenLoop } from "../ingestion/pipeline";
+import { resolveOpenLoop } from "../ingestion/loops";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const dbTest = hasDb ? test : test.skip;

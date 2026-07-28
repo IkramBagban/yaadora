@@ -225,7 +225,7 @@ dbTest(
   async () => {
     const { db, users, memories, rules, eq } = require("@repo/db");
     const { editRuleAsCorrection } = require("./rule-edit");
-    const { upsertStandingRule } = require("../ingestion/pipeline");
+    const { upsertStandingRule } = require("../ingestion/rules");
 
     const suffix = crypto.randomUUID();
     let userId: string | null = null;

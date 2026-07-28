@@ -16,7 +16,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildContextPackText } from "../retrieval/context-pack";
 import { COMMITMENT_PROXIMITY_MAX_DISTANCE } from "./intention";
-import { COMMITMENT_RESOLUTION_MAX_DISTANCE } from "../ingestion/pipeline";
+import { COMMITMENT_RESOLUTION_MAX_DISTANCE } from "../ingestion/loops";
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const dbTest = hasDb ? test : test.skip;
@@ -91,7 +91,7 @@ dbTest(
     const { db, users, memories, openLoops, surfacings, eq, findCommitmentLoopCandidates } =
       require("@repo/db");
     const { evaluateAndRecord } = require("./candidates");
-    const { resolveOpenLoop } = require("../ingestion/pipeline");
+    const { resolveOpenLoop } = require("../ingestion/loops");
 
     const suffix = crypto.randomUUID();
     let userId: string | null = null;
