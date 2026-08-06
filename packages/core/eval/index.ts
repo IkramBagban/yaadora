@@ -1,15 +1,19 @@
 /**
- * @repo/core/eval — the retrieval + reasoning regression harness.
+ * @repo/core/eval — ingestion + retrieval regression harness.
  *
- * The golden dataset (dataset.ts) and eval cases (cases.ts) are the authored
- * baseline; runner.ts drives them through the real HTTP pipeline and scores with
- * metrics.ts. Run with `bun run eval` from the repo root.
+ * Commands (repo root):
+ *   bun run eval           # ingest → retrieve (full)
+ *   bun run eval:ingest    # capture / extraction / facts / loops / reminders
+ *   bun run eval:retrieve  # Ask quality (needs prior ingest state)
  *
- * These are not re-exported from @repo/core's main index on purpose: eval is a
- * dev/CI tool, not part of the server/worker runtime surface.
+ * Not re-exported from @repo/core main index — dev/CI tool only.
  */
 export { GOLDEN_DATASET, DATASET_SIZE, BY_CLIENT_ID } from "./dataset";
 export type { SeedMemory, Trap } from "./dataset";
-export { EVAL_CASES, CASE_COUNT } from "./cases";
-export type { EvalCase, EvalCategory } from "./cases";
+export { EVAL_CASES, CASE_COUNT, RETRIEVE_CASES } from "./cases";
+export type { EvalCase, EvalCategory, RetrieveCase, RetrieveCategory } from "./cases";
+export {
+  MEMORY_INGEST_EXPECTATIONS,
+  GLOBAL_INGEST_EXPECTATIONS,
+} from "./ingest-expectations";
 export { recallAtK, reciprocalRank, hasForbidden, mean, r3 } from "./metrics";

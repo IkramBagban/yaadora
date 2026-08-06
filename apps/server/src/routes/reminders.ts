@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { db, reminders, eq, and, gte, desc, asc } from "@repo/db";
+import { db, reminders, eq, and, gte, desc, asc, inArray } from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
 import { json, badRequest, notFound, unauthorized, serverError } from "../http";
@@ -141,6 +141,13 @@ export async function listReminders(req: Request): Promise<Response> {
       eq(reminders.userId, userId),
       eq(reminders.status, "pending"),
       gte(reminders.dueAt, new Date()),
+    );
+  } else if (scope === "all") {
+    // Active surface: pending + suggested (not done/dismissed). Used by eval
+    // and any full reminder inventory UI.
+    where = and(
+      eq(reminders.userId, userId),
+      inArray(reminders.status, ["pending", "suggested"]),
     );
   } else {
     where = and(eq(reminders.userId, userId), eq(reminders.status, "pending"));

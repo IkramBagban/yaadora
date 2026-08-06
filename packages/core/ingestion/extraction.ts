@@ -50,7 +50,7 @@ export const ExtractionSchema = z.object({
       z.object({
         surface: z.string(), // as written ("Urhan")
         type: z.enum(ENTITY_TYPES).catch("topic"),
-        canonicalGuess: z.string(), // normalized ("Urhan")
+        canonicalGuess: z.string(), // normalized ("Urhan"). canonical means "the name the system would use to refer to this entity"
       }),
     )
     .catch([]),
@@ -58,7 +58,7 @@ export const ExtractionSchema = z.object({
     .array(
       z.object({
         subject: z.string(), // entity surface or "user"
-        predicate: z.string(),
+        predicate: z.string(), // relation ("is", "likes", "works at")
         object: z.string(),
         factText: z.string(), // natural-language atomic statement
         validFrom: z.string().nullable().catch(null),

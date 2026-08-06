@@ -8,7 +8,10 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
     "seed": "bun run scripts/seed.ts",
-    "eval": "bun run packages/core/eval/runner.ts"
+    "eval": "bun run packages/core/eval/run-all.ts",
+    "eval:all": "bun run packages/core/eval/run-all.ts",
+    "eval:ingest": "bun run packages/core/eval/run-ingest.ts",
+    "eval:retrieve": "bun run packages/core/eval/run-retrieve.ts"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

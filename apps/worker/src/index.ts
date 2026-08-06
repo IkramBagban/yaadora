@@ -28,7 +28,7 @@ initLogging("worker");
 const log = createLogger("worker");
 
 /**
- * apps/worker — the BullMQ ingestion worker (spec 01 §2, spec 02 §2).
+ * apps/worker — the BullMQ ingestion worker.
  *
  * Consumes the `ingestion` queue (one job per captured memory) and runs the
  * full pipeline via `runIngestion(memoryId)`. The queue name, connection, and

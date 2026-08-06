@@ -234,6 +234,42 @@ export const GOLDEN_DATASET: SeedMemory[] = [
   { clientId: "g-goal-rust", rawText: "My goal this year is to get properly good at Rust.", tags: ["goal", "rust", "learning"] },
   { clientId: "g-media-show", rawText: "Finally finished Breaking Bad. Best show I've watched in years.", tags: ["media", "tv"] },
   { clientId: "g-person-mentor", rawText: "Grabbed coffee with my old mentor Priya. She always reframes my problems in a way I can't.", tags: ["person", "priya", "mentor"] },
+
+  // ── Standing rule (procedural memory) ─────────────────────────────────────
+  {
+    clientId: "g-rule-xpost",
+    rawText:
+      "When I'm about to post on social media or ask for feedback on a draft tweet, remind me: write something real that helps people, not AI-slop. Spend real time on it.",
+    tags: ["rule", "social"],
+    note: "Standing rule: when X, do Y. Must become a rules row with provenance.",
+  },
+
+  // ── Open loop + later resolution ──────────────────────────────────────────
+  {
+    clientId: "g-loop-equity",
+    rawText:
+      "Still haven't resolved the equity split conversation with Rahul. It's hanging over every standup.",
+    tags: ["loop", "rahul", "work"],
+    trap: "intent",
+    note: "Unresolved conflict / commitment — must create an open loop.",
+  },
+  {
+    clientId: "g-loop-equity-done",
+    rawText:
+      "Finally settled the equity split with Rahul today. 60/40, signed. That weight is off.",
+    occurredHint: "today",
+    tags: ["loop", "rahul", "work"],
+    note: "Should resolve the prior equity open loop (resolvesLoop).",
+  },
+
+  // ── Soft contradiction / reverse supersession probe material ──────────────
+  {
+    clientId: "g-loc-visit-mumbai",
+    rawText: "Back in Mumbai for a weekend visiting family. Still love the city, but Pune is home now.",
+    occurredHint: "last weekend",
+    tags: ["location", "mumbai", "pune"],
+    note: "Mentions Mumbai without undoing the Pune move — current home stays Pune.",
+  },
 ];
 
 /** Total count, handy for the runner's progress output. */

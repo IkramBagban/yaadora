@@ -6,6 +6,9 @@ import {
   facts,
   entities,
   memoryEntities,
+  openLoops,
+  reminders,
+  rules,
   eq,
   and,
   lt,
@@ -73,7 +76,7 @@ const CreateMemoryBody = z.object({
   occurredHint: z.string().optional(),
 });
 
-// Best-effort idempotency for offline-sync retries (spec 03 §1.1). We have no
+// Best-effort idempotency for offline-sync retries  We have no
 // clientId column on the immutable memories table, so we key on Redis. Failures
 // here never block capture. TODO(later wave): a durable dedupe table / column if
 // stronger guarantees are needed.
@@ -123,7 +126,8 @@ export async function createMemory(req: Request): Promise<Response> {
   }
   const body = parsed.data;
 
-  // Idempotency: a retried offline flush returns the original row.
+  // If the client replays the same offline capture, Redis gives us the
+  // original memory id and we return that row instead of inserting a duplicate.
   if (body.clientId) {
     const existingId = await idemLookup(userId, body.clientId);
     if (existingId) {
@@ -227,7 +231,8 @@ export async function listMemories(req: Request): Promise<Response> {
   return json({ items, nextCursor });
 }
 
-/** GET /memories/:id — one memory + its derived facts + linked entities. */
+/** GET /memories/:id — one memory + derived facts, entities, open loops,
+ *  reminders, and standing rules sourced from this capture (ingestion surface). */
 export async function getMemoryDetail(
   req: Request,
   id: string,
@@ -259,5 +264,51 @@ export async function getMemoryDetail(
       and(eq(memoryEntities.memoryId, id), eq(entities.userId, userId)),
     );
 
-  return json({ memory, facts: derivedFacts, entities: linkedEntities });
+  const derivedLoops = await db
+    .select({
+      id: openLoops.id,
+      kind: openLoops.kind,
+      title: openLoops.title,
+      entityId: openLoops.entityId,
+      dueAt: openLoops.dueAt,
+      status: openLoops.status,
+      sourceMemory: openLoops.sourceMemory,
+      createdAt: openLoops.createdAt,
+    })
+    .from(openLoops)
+    .where(and(eq(openLoops.sourceMemory, id), eq(openLoops.userId, userId)));
+
+  const derivedReminders = await db
+    .select({
+      id: reminders.id,
+      text: reminders.text,
+      dueAt: reminders.dueAt,
+      status: reminders.status,
+      origin: reminders.origin,
+      sourceMemory: reminders.sourceMemory,
+      createdAt: reminders.createdAt,
+    })
+    .from(reminders)
+    .where(and(eq(reminders.sourceMemory, id), eq(reminders.userId, userId)));
+
+  const derivedRules = await db
+    .select({
+      id: rules.id,
+      ruleText: rules.ruleText,
+      triggerText: rules.triggerText,
+      active: rules.active,
+      sourceMemory: rules.sourceMemory,
+      createdAt: rules.createdAt,
+    })
+    .from(rules)
+    .where(and(eq(rules.sourceMemory, id), eq(rules.userId, userId)));
+
+  return json({
+    memory,
+    facts: derivedFacts,
+    entities: linkedEntities,
+    openLoops: derivedLoops,
+    reminders: derivedReminders,
+    rules: derivedRules,
+  });
 }

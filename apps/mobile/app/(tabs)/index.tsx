@@ -128,7 +128,7 @@ export default function CaptureScreen() {
     const value = text.trim();
     if (!value) return;
 
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); // a haptic feedback to indicate the save action has been triggered. when the user saves a memory, they will feel a medium-strength vibration on their device, confirming that the action has been successfully initiated.
     enqueueMemory(value, dictated ? 'voice' : 'manual');
 
     // The words settle downward — deposited — then the page is blank again.

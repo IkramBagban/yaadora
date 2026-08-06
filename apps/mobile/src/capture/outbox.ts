@@ -16,6 +16,7 @@ import { newClientId } from '../lib/ids';
 export type CaptureSource = 'manual' | 'voice';
 
 export interface OutboxItem {
+  /** Client-generated idempotency key (UUID) used by the server to dedupe requests. */
   clientId: string;
   rawText: string;
   source: CaptureSource;
@@ -108,8 +109,8 @@ export function enqueueMemory(
     attempts: 0,
   };
   setState({ items: [...state.items, item], blockedError: null });
-  void persist();  
-  void flushOutbox(); 
+  void persist(); // persist the updated queue to AsyncStorage
+  void flushOutbox();  // attempt to sync the queue in the background
   return item;
 }
 
