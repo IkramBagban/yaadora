@@ -27,6 +27,12 @@ import {
 } from "./lib/state";
 import type { CheckResult, EvalReport } from "./lib/types";
 import {
+  finishTokenTracking,
+  newEvalSessionId,
+  startTokenTracking,
+  switchTokenPhase,
+} from "./lib/usage";
+import {
   hasForbidden,
   mean,
   r3,
@@ -169,6 +175,9 @@ function scoreRetrieveCase(
 export async function runRetrieve(opts?: {
   /** When true (default if no state), seed+process before asking. */
   allowReseed?: boolean;
+  usageSessionId?: string;
+  /** When true, do not finalize token summary (caller will). */
+  deferTokenSummary?: boolean;
 }): Promise<EvalReport> {
   const cfg = loadEvalConfig();
   if (!cfg.token) {
@@ -179,6 +188,35 @@ export async function runRetrieve(opts?: {
   }
 
   await healthCheck(cfg);
+
+  // Token session: continue full-pipeline session, or start retrieve-only.
+  let usageSessionId = opts?.usageSessionId;
+  if (!usageSessionId) {
+    try {
+      const prev = Bun.file(`${cfg.resultsDir}/usage-session.json`);
+      if (await prev.exists()) {
+        const j = (await prev.json()) as { sessionId?: string };
+        if (j.sessionId) usageSessionId = j.sessionId;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  usageSessionId = usageSessionId ?? newEvalSessionId("retrieve");
+
+  // Retrieve-only: begin session (clears). Full pipeline: only switch phase.
+  if (opts?.usageSessionId || opts?.deferTokenSummary) {
+    await switchTokenPhase("retrieve", usageSessionId);
+  } else {
+    // Standalone retrieve: keep prior events if session reused from file,
+    // but mark phase retrieve for new events.
+    await switchTokenPhase("retrieve", usageSessionId);
+  }
+
+  console.log(
+    `\n  Bootstrap user: ${process.env.SEED_USER_EMAIL ?? "owner@yaadora.local"} (same bootstrap identity — not a new user)`,
+  );
+  console.log(`  Token session:  ${usageSessionId}`);
 
   let state = await loadState(cfg);
   const forceReseed = process.env.EVAL_RETRIEVE_RESEED === "1";
@@ -282,6 +320,12 @@ export async function runRetrieve(opts?: {
     gatesPassed,
   );
 
+  let tokens: EvalReport["tokens"];
+  if (!opts?.deferTokenSummary) {
+    await Bun.sleep(1000);
+    tokens = await finishTokenTracking(usageSessionId);
+  }
+
   const report: EvalReport = {
     ranAt: new Date().toISOString(),
     command: "retrieve",
@@ -289,7 +333,15 @@ export async function runRetrieve(opts?: {
     checks,
     gatesPassed,
     clientToId: Object.fromEntries(clientToId),
+    tokens,
+    bootstrapUserEmail: process.env.SEED_USER_EMAIL ?? "owner@yaadora.local",
   };
+
+  await Bun.$`mkdir -p ${cfg.resultsDir}`.quiet();
+  await Bun.write(
+    `${cfg.resultsDir}/usage-session.json`,
+    JSON.stringify({ sessionId: usageSessionId, phase: "retrieve" }, null, 2),
+  );
 
   printReport(report);
   await writeReport(cfg, report);

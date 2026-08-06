@@ -16,11 +16,12 @@ const log = createLogger("ai");
 
 /**
  * LLM provider is chosen dynamically from AI_PROVIDER:
- *   "groq" | "google" | "openai" | "antigravity"
+ *   "groq" | "google" | "openai" | "antigravity" | "opencode"
  *
  * Prod default stays "groq". Local subsidized models go through CLIProxyAPI:
  *   AI_PROVIDER=openai        # ChatGPT/Codex GPT models
  *   AI_PROVIDER=antigravity   # Google Antigravity Gemini models
+ *   AI_PROVIDER=opencode      # OpenCode free DeepSeek V4 Flash for local/eval use
  *   OPENAI_BASE_URL=http://127.0.0.1:8317/v1
  *   OPENAI_API_KEY=<local proxy key>
  * Leave OPENAI_BASE_URL unset with AI_PROVIDER=openai to hit real OpenAI API.
@@ -42,7 +43,7 @@ const log = createLogger("ai");
  * embeddings use the official OpenAI host unless OPENAI_EMBEDDING_BASE_URL is set.
  */
 
-type Provider = "groq" | "google" | "openai" | "antigravity";
+type Provider = "groq" | "google" | "openai" | "antigravity" | "opencode";
 type Tier = "ingestion" | "reasoning" | "fast";
 
 const PROVIDERS: readonly Provider[] = [
@@ -50,6 +51,7 @@ const PROVIDERS: readonly Provider[] = [
   "google",
   "openai",
   "antigravity",
+  "opencode",
 ] as const;
 
 function parseProvider(raw: string | undefined): Provider {
@@ -86,12 +88,20 @@ const MODEL_IDS: Record<Provider, Record<Tier, string>> = {
   },
   // Google Antigravity subscription via CLIProxyAPI (OpenAI-compatible endpoint).
   // Model ids must match CLIProxy's catalog (gemini-3.x…).
-  // Prefer pro/flash (not flash-lite) for structured generateObject — lite often
-  // ignores json_schema and returns markdown fences / invalid enums.
+  // Flash for speed (evals + high-volume ingestion). Prefer flash over flash-lite:
+  // lite often ignores json_schema and returns markdown fences / invalid enums.
+  // Override with AI_MODEL_* env if you need pro for hard Ask turns.
   antigravity: {
-    ingestion: "gemini-3.1-pro-low",
-    reasoning: "gemini-3.1-pro-low",
+    ingestion: "gemini-3-flash",
+    reasoning: "gemini-3-flash",
     fast: "gemini-3-flash",
+  },
+  // OpenCode's free DeepSeek V4 Flash model. This is intended for local
+  // development/evals and may be discontinued or rate-limited by OpenCode.
+  opencode: {
+    ingestion: "deepseek-v4-flash-free",
+    reasoning: "deepseek-v4-flash-free",
+    fast: "deepseek-v4-flash-free",
   },
 };
 
@@ -181,17 +191,45 @@ function makeModelFactory(
     return (apiKey) =>
       createGoogleGenerativeAI({ apiKey })(modelId) as LanguageModelV4;
   }
-  if (provider === "openai" || provider === "antigravity") {
-    // Both use OpenAI-compatible HTTP. Antigravity requires OPENAI_BASE_URL
-    // (CLIProxyAPI). OpenAI can omit it to hit api.openai.com.
-    const baseURL = process.env.OPENAI_BASE_URL?.trim() || undefined;
+  if (
+    provider === "openai" ||
+    provider === "antigravity" ||
+    provider === "opencode"
+  ) {
+    // These providers use OpenAI-compatible HTTP. OpenCode's free endpoint is
+    // public and keyless for now, but accepts OPENAI_API_KEY/OPENCODE_API_KEY
+    // when credentials are required.
+    const baseURL =
+      process.env.OPENAI_BASE_URL?.trim() ||
+      (provider === "opencode" ? "https://opencode.ai/zen/v1" : undefined);
     if (provider === "antigravity" && !baseURL) {
       log.warn(
         "AI_PROVIDER=antigravity but OPENAI_BASE_URL is unset — set it to CLIProxyAPI (e.g. http://127.0.0.1:8317/v1)",
       );
     }
-    return (apiKey) =>
-      createOpenAI({ apiKey, baseURL })(modelId) as LanguageModelV4;
+    return (apiKey) => {
+      // OpenCode's free endpoint currently accepts keyless requests. The
+      // OpenAI SDK requires a key value, so provide a placeholder and strip
+      // the generated Authorization header unless a real key was supplied.
+      const keylessOpenCode = provider === "opencode" && !apiKey;
+      const effectiveApiKey = keylessOpenCode ? "opencode-free" : apiKey;
+      const fetchWithoutAuth = keylessOpenCode
+        ? async (input: RequestInfo | URL, init?: RequestInit) => {
+            const headers = new Headers(init?.headers);
+            headers.delete("authorization");
+            return fetch(input, { ...init, headers });
+          }
+        : undefined;
+      const client = createOpenAI({
+        apiKey: effectiveApiKey,
+        baseURL,
+        fetch: fetchWithoutAuth as typeof fetch,
+      });
+      // OpenCode free models expose /chat/completions, not /responses.
+      return (provider === "opencode"
+        ? client.chat(modelId)
+        : client(modelId)) as LanguageModelV4;
+    };
   }
   return (apiKey) =>
     createGroq({ apiKey, baseURL: "https://api.groq.com/openai/v1" })(
@@ -201,7 +239,10 @@ function makeModelFactory(
 
 function keyEnvFor(provider: Provider): string | undefined {
   if (provider === "google") return process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  // openai + antigravity both auth to CLIProxy / OpenAI-compatible with OPENAI_API_KEY
+  if (provider === "opencode") {
+    return process.env.OPENCODE_API_KEY || process.env.OPENAI_API_KEY;
+  }
+  // openai + antigravity auth to CLIProxy / OpenAI-compatible with OPENAI_API_KEY
   if (provider === "openai" || provider === "antigravity") {
     return process.env.OPENAI_API_KEY;
   }
@@ -221,7 +262,7 @@ function buildTierModel(tier: Tier): LanguageModel {
 
   return wrapLanguageModel({
     model: withKeyFallback(models),
-    middleware: createLoggerMiddleware(`${provider}:${modelId}`),
+    middleware: createLoggerMiddleware(`${provider}:${modelId}`, { tier }),
   });
 }
 

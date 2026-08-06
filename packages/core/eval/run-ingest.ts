@@ -27,6 +27,11 @@ import {
 import { printReport, summarizeStage, writeReport } from "./lib/report";
 import { saveState } from "./lib/state";
 import type { CheckResult, EvalReport } from "./lib/types";
+import {
+  finishTokenTracking,
+  newEvalSessionId,
+  startTokenTracking,
+} from "./lib/usage";
 import { r3 } from "./metrics";
 
 function includesAny(text: string, needles: string[]): boolean {
@@ -278,7 +283,12 @@ async function scoreGlobal(
   }
 }
 
-export async function runIngest(): Promise<EvalReport> {
+export async function runIngest(opts?: {
+  /** Reuse an existing usage session (full eval pipeline). */
+  usageSessionId?: string;
+  /** When true, do not finalize/print token summary (caller will). */
+  deferTokenSummary?: boolean;
+}): Promise<EvalReport> {
   const cfg = loadEvalConfig();
   if (!cfg.token) {
     console.error(
@@ -289,9 +299,192 @@ export async function runIngest(): Promise<EvalReport> {
 
   await healthCheck(cfg);
 
+  const usageSessionId = opts?.usageSessionId ?? newEvalSessionId("ingest");
+  await startTokenTracking(usageSessionId, "ingest");
+
+  const bootstrapUserEmail =
+    process.env.SEED_USER_EMAIL ?? "owner@yaadora.local";
+  console.log(
+    `\n  Bootstrap user: ${bootstrapUserEmail} (reused if already exists — not a new user per run)`,
+  );
+  console.log(`  Token session:  ${usageSessionId}`);
+
   const clientToId = await seedAll(cfg, GOLDEN_DATASET);
+  const idToClient = new Map(
+    [...clientToId.entries()].map(([c, id]) => [id, c]),
+  );
   const ids = [...clientToId.values()];
-  const { processed, failed } = await waitForProcessing(cfg, ids);
+
+  const memExps = cfg.only.length
+    ? MEMORY_INGEST_EXPECTATIONS.filter(
+        (e) =>
+          cfg.only.includes(e.clientId) ||
+          cfg.only.includes(`ingest-mem-${e.clientId}`),
+      )
+    : MEMORY_INGEST_EXPECTATIONS;
+
+  // Live scoring state — updated as each memory settles.
+  const checksById = new Map<string, CheckResult>();
+  const details = new Map<string, MemoryDetail>();
+  const settledLog: Array<{
+    at: string;
+    clientId?: string;
+    memoryId: string;
+    status: string;
+    checkIds: string[];
+  }> = [];
+
+  await Bun.$`mkdir -p ${cfg.resultsDir}`.quiet();
+  const livePath = `${cfg.resultsDir}/live-ingest.json`;
+
+  async function writeLiveProgress(extra: Record<string, unknown> = {}) {
+    const checks = [...checksById.values()];
+    const passed = checks.filter((c) => c.passed).length;
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      usageSessionId,
+      bootstrapUserEmail,
+      ...extra,
+      checksSoFar: checks.length,
+      checksPassed: passed,
+      settled: settledLog,
+      checks,
+    };
+    await Bun.write(livePath, JSON.stringify(payload, null, 2));
+  }
+
+  /** Score all expectations that target this clientId (and print a one-liner). */
+  async function scoreClientLive(
+    clientId: string | undefined,
+    memoryId: string,
+    status: "processed" | "failed",
+  ) {
+    if (!clientId) return;
+    const related = memExps.filter((e) => e.clientId === clientId);
+    if (related.length === 0) {
+      // No authored expectation — still note settle in live log.
+      settledLog.push({
+        at: new Date().toISOString(),
+        clientId,
+        memoryId,
+        status,
+        checkIds: [],
+      });
+      return;
+    }
+
+    if (status === "failed") {
+      for (const exp of related) {
+        const r = scoreMemoryExpectation(exp, null, "failed");
+        checksById.set(r.id, r);
+        console.log(
+          `         ↳ check ${r.id}: FAIL — ${r.reason}`,
+        );
+      }
+      settledLog.push({
+        at: new Date().toISOString(),
+        clientId,
+        memoryId,
+        status,
+        checkIds: related.map((e) => `ingest-mem-${e.clientId}`),
+      });
+      await writeLiveProgress({
+        last: { clientId, status: "failed" },
+      });
+      return;
+    }
+
+    try {
+      const d = await getMemoryDetail(cfg, memoryId);
+      details.set(clientId, d);
+      const checkIds: string[] = [];
+      for (const exp of related) {
+        const r = scoreMemoryExpectation(exp, d, "processed");
+        checksById.set(r.id, r);
+        checkIds.push(r.id);
+        const mark = r.passed ? "PASS" : "FAIL";
+        console.log(
+          `         ↳ check ${r.id}: ${mark}${r.passed ? "" : ` — ${r.reason}`}`,
+        );
+        if (r.passed && r.details) {
+          const nFacts = r.details.nFacts ?? "?";
+          const nEnt = r.details.nEntities ?? "?";
+          const nLoops = r.details.nOpenLoops ?? "?";
+          const nRem = r.details.nReminders ?? "?";
+          console.log(
+            `            facts=${nFacts} entities=${nEnt} loops=${nLoops} reminders=${nRem}`,
+          );
+        }
+      }
+      settledLog.push({
+        at: new Date().toISOString(),
+        clientId,
+        memoryId,
+        status,
+        checkIds,
+      });
+    } catch (err) {
+      for (const exp of related) {
+        const r: CheckResult = {
+          id: `ingest-mem-${exp.clientId}`,
+          stage: "ingest",
+          category: exp.category,
+          subject: exp.clientId,
+          passed: false,
+          reason: `detail fetch failed: ${err instanceof Error ? err.message : err}`,
+        };
+        checksById.set(r.id, r);
+        console.log(`         ↳ check ${r.id}: FAIL — ${r.reason}`);
+      }
+      settledLog.push({
+        at: new Date().toISOString(),
+        clientId,
+        memoryId,
+        status: "processed",
+        checkIds: related.map((e) => `ingest-mem-${e.clientId}`),
+      });
+    }
+    await writeLiveProgress({ last: { clientId, status } });
+  }
+
+  const { processed, failed, stillPending, timedOut } = await waitForProcessing(
+    cfg,
+    ids,
+    {
+      idToClient,
+      softTimeout: true,
+      onSettle: async (ev) => {
+        await scoreClientLive(ev.clientId, ev.memoryId, ev.status);
+      },
+    },
+  );
+
+  // Expectations for clientIds that never settled (timeout)
+  for (const mid of stillPending) {
+    const cid = idToClient.get(mid);
+    if (!cid) continue;
+    for (const exp of memExps.filter((e) => e.clientId === cid)) {
+      if (checksById.has(`ingest-mem-${exp.clientId}`)) continue;
+      checksById.set(`ingest-mem-${exp.clientId}`, {
+        id: `ingest-mem-${exp.clientId}`,
+        stage: "ingest",
+        category: exp.category,
+        subject: exp.clientId,
+        passed: false,
+        reason: "still pending when wait timed out",
+      });
+    }
+  }
+
+  // Expectations whose memories never appeared in settle (shouldn't happen often)
+  for (const exp of memExps) {
+    const key = `ingest-mem-${exp.clientId}`;
+    if (checksById.has(key)) continue;
+    const mid = clientToId.get(exp.clientId);
+    if (!mid) {
+      checksById.set(key, scoreMemoryExpectation(exp, null, "missing"));
+    }
+  }
 
   await saveState(cfg, {
     clientToId: Object.fromEntries(clientToId),
@@ -299,54 +492,18 @@ export async function runIngest(): Promise<EvalReport> {
     failedIds: failed,
   });
 
-  console.log("\nScoring ingestion expectations ...");
-  const checks: CheckResult[] = [];
-  const details = new Map<string, MemoryDetail>();
-
-  // Per-memory
-  const memExps = cfg.only.length
-    ? MEMORY_INGEST_EXPECTATIONS.filter((e) =>
-        cfg.only.includes(e.clientId) || cfg.only.includes(`ingest-mem-${e.clientId}`),
-      )
-    : MEMORY_INGEST_EXPECTATIONS;
-
-  for (const exp of memExps) {
-    const mid = clientToId.get(exp.clientId);
-    if (!mid) {
-      checks.push(scoreMemoryExpectation(exp, null, "missing"));
-      continue;
-    }
-    if (failed.includes(mid)) {
-      checks.push(scoreMemoryExpectation(exp, null, "failed"));
-      continue;
-    }
-    try {
-      const d = await getMemoryDetail(cfg, mid);
-      details.set(exp.clientId, d);
-      checks.push(scoreMemoryExpectation(exp, d, "processed"));
-    } catch (err) {
-      checks.push({
-        id: `ingest-mem-${exp.clientId}`,
-        stage: "ingest",
-        category: exp.category,
-        subject: exp.clientId,
-        passed: false,
-        reason: `detail fetch failed: ${err instanceof Error ? err.message : err}`,
-      });
-    }
-  }
-
-  // Also fetch details needed for supersession globals even if not in memExps
+  console.log("\nScoring global graph expectations ...");
+  // Details for supersession globals
   for (const g of GLOBAL_INGEST_EXPECTATIONS) {
     if (!g.supersession) continue;
     for (const cid of [g.supersession.oldClientId, g.supersession.newClientId]) {
       if (details.has(cid)) continue;
       const mid = clientToId.get(cid);
-      if (!mid || failed.includes(mid)) continue;
+      if (!mid || failed.includes(mid) || stillPending.includes(mid)) continue;
       try {
         details.set(cid, await getMemoryDetail(cfg, mid));
       } catch {
-        /* scored later */
+        /* scored as fail below */
       }
     }
   }
@@ -356,11 +513,18 @@ export async function runIngest(): Promise<EvalReport> {
     : GLOBAL_INGEST_EXPECTATIONS;
 
   for (const exp of globalExps) {
-    checks.push(await scoreGlobal(exp, clientToId, cfg, details));
+    const r = await scoreGlobal(exp, clientToId, cfg, details);
+    checksById.set(r.id, r);
+    console.log(
+      `  global ${r.id}: ${r.passed ? "PASS" : "FAIL"}${r.passed ? "" : ` — ${r.reason}`}`,
+    );
   }
 
+  const checks = [...checksById.values()];
+
   // Process-all gate as a check
-  const allProcessed = failed.length === 0;
+  const allProcessed =
+    failed.length === 0 && stillPending.length === 0 && processed.length === ids.length;
   checks.push({
     id: "ingest-all-processed",
     stage: "ingest",
@@ -369,8 +533,13 @@ export async function runIngest(): Promise<EvalReport> {
     passed: cfg.requireAllProcessed ? allProcessed : true,
     reason: allProcessed
       ? `all ${processed.length} processed`
-      : `${failed.length} failed ingestion`,
-    details: { processed: processed.length, failed: failed.length },
+      : `ok=${processed.length} fail=${failed.length} pending=${stillPending.length}${timedOut ? " (timeout)" : ""}`,
+    details: {
+      processed: processed.length,
+      failed: failed.length,
+      pending: stillPending.length,
+      timedOut,
+    },
   });
 
   const passRate =
@@ -387,11 +556,20 @@ export async function runIngest(): Promise<EvalReport> {
       minPassRate: cfg.minIngestPassRate,
       processed: processed.length,
       failed: failed.length,
+      pending: stillPending.length,
+      timedOut,
       datasetSize: GOLDEN_DATASET.length,
       expectations: checks.length,
     },
     gatesPassed,
   );
+
+  let tokens: EvalReport["tokens"];
+  if (!opts?.deferTokenSummary) {
+    // Give the worker a moment to flush last usage events to Redis.
+    await Bun.sleep(1500);
+    tokens = await finishTokenTracking(usageSessionId);
+  }
 
   const report: EvalReport = {
     ranAt: new Date().toISOString(),
@@ -400,10 +578,27 @@ export async function runIngest(): Promise<EvalReport> {
     checks,
     gatesPassed,
     clientToId: Object.fromEntries(clientToId),
+    tokens,
+    bootstrapUserEmail,
   };
+
+  await Bun.write(
+    `${cfg.resultsDir}/usage-session.json`,
+    JSON.stringify({ sessionId: usageSessionId, phase: "ingest" }, null, 2),
+  );
+  // Final snapshot of live file
+  await writeLiveProgress({
+    finished: true,
+    processed: processed.length,
+    failed: failed.length,
+    pending: stillPending.length,
+    timedOut,
+    gatesPassed,
+  });
 
   printReport(report);
   await writeReport(cfg, report);
+  console.log(`Live progress (updated during run): ${livePath}`);
   return report;
 }
 

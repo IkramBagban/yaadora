@@ -1,6 +1,9 @@
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
+import { createLogger } from "@repo/logger";
 import { ingestionModel } from "../ai/models";
+
+const log = createLogger("ingestion:extraction");
 
 /**
  * The single structured-extraction schema (spec 02 §2).
@@ -37,6 +40,12 @@ const LOOP_KINDS = [
   "thread",
 ] as const;
 
+/** Coerce common proxy quirks (numbers-as-strings, missing fields). */
+const looseString = z
+  .union([z.string(), z.number(), z.boolean()])
+  .transform((v) => String(v))
+  .pipe(z.string());
+
 export const ExtractionSchema = z.object({
   // ISO 8601; resolved against the memory's createdAt + user timezone. null if
   // the memory carries no discernible event time (spec 02 §2.1).
@@ -48,28 +57,35 @@ export const ExtractionSchema = z.object({
   entities: z
     .array(
       z.object({
-        surface: z.string(), // as written ("Urhan")
+        surface: looseString.catch(""), // as written ("Urhan")
         type: z.enum(ENTITY_TYPES).catch("topic"),
-        canonicalGuess: z.string(), // normalized ("Urhan"). canonical means "the name the system would use to refer to this entity"
+        // normalized ("Urhan") — canonical name the system would use
+        canonicalGuess: looseString.catch(""),
       }),
     )
-    .catch([]),
+    .catch([])
+    .transform((rows) =>
+      rows.filter((e) => e.surface.trim().length > 0 || e.canonicalGuess.trim().length > 0),
+    ),
   facts: z
     .array(
       z.object({
-        subject: z.string(), // entity surface or "user"
-        predicate: z.string(), // relation ("is", "likes", "works at")
-        object: z.string(),
-        factText: z.string(), // natural-language atomic statement
+        subject: looseString.catch("user"),
+        predicate: looseString.catch("is"),
+        object: looseString.catch(""),
+        factText: looseString.catch(""),
         validFrom: z.string().nullable().catch(null),
         factType: z.enum(FACT_TYPES).catch("episodic"),
-        confidence: z.number().min(0).max(1).catch(0.7),
+        confidence: z.coerce.number().min(0).max(1).catch(0.7),
       }),
     )
-    .catch([]),
+    .catch([])
+    .transform((rows) =>
+      rows.filter((f) => f.factText.trim().length > 0 || f.object.trim().length > 0),
+    ),
   intent: z
     .object({
-      hasFutureAction: z.boolean().catch(false),
+      hasFutureAction: z.coerce.boolean().catch(false),
       dueAt: z.string().nullable().catch(null),
       text: z.string().nullable().catch(null),
     })
@@ -79,23 +95,27 @@ export const ExtractionSchema = z.object({
   // the system how to behave when a concrete situation occurs.
   standingRule: z
     .object({
-      ruleText: z.string().min(1),
-      triggerText: z.string().min(1),
+      ruleText: looseString.pipe(z.string().min(1)).catch(""),
+      triggerText: looseString.pipe(z.string().min(1)).catch(""),
     })
     .nullable()
-    .catch(null),
+    .catch(null)
+    .transform((r) =>
+      r && r.ruleText.trim() && r.triggerText.trim() ? r : null,
+    ),
   openLoops: z
     .array(
       z.object({
         kind: z.enum(LOOP_KINDS).catch("thread"),
-        title: z.string().min(1),
+        title: looseString.catch(""),
         // An entity is optional in storage; preserve that distinction rather than
         // inventing a link when the memory does not name one.
         entityRef: z.string().nullable().catch(null),
         dueAt: z.string().nullable().catch(null),
       }),
     )
-    .catch([]),
+    .catch([])
+    .transform((rows) => rows.filter((l) => l.title.trim().length > 0)),
   resolvesLoop: z.string().min(1).nullable().catch(null),
 });
 
@@ -175,13 +195,11 @@ function formatNow(createdAt: Date, timezone: string): string {
   }
 }
 
-/**
- * Stage 2.1–2.4: the single structured-extraction call (spec 02 §2).
- * Pure-ish: takes a memory's text + context, returns the parsed Extraction.
- */
 /** Strip markdown fences / extract first JSON object — proxy models often wrap. */
 function stripJsonFences(text: string): string {
   let t = text.trim();
+  // Strip BOM / leading chatter
+  t = t.replace(/^\uFEFF/, "");
   const fenced = t.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
   if (fenced?.[1]) t = fenced[1].trim();
   // If still not pure JSON, take outermost object
@@ -190,23 +208,110 @@ function stripJsonFences(text: string): string {
     const end = t.lastIndexOf("}");
     if (start >= 0 && end > start) t = t.slice(start, end + 1);
   }
+  // Trailing commas (common model bug)
+  t = t.replace(/,\s*([\]}])/g, "$1");
   return t.trim();
 }
 
-export async function extract(ctx: ExtractionContext): Promise<Extraction> {
-  const { object } = await generateObject({
-    model: ingestionModel,
-    schema: ExtractionSchema,
-    system: SYSTEM_PROMPT,
-    prompt: `Current date/time (write time): ${formatNow(ctx.createdAt, ctx.timezone)}
+function parseExtractionJson(text: string): Extraction {
+  const cleaned = stripJsonFences(text);
+  if (!cleaned || cleaned === "{}") {
+    throw new Error("empty extraction JSON");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(cleaned);
+  } catch (err) {
+    throw new Error(
+      `JSON parse failed: ${err instanceof Error ? err.message : String(err)}; head=${cleaned.slice(0, 120)}`,
+    );
+  }
+  // safeParse + schema .catch defaults → almost always produces a usable object
+  const parsed = ExtractionSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `schema soft-parse failed: ${parsed.error.issues
+        .slice(0, 3)
+        .map((i) => i.message)
+        .join("; ")}`,
+    );
+  }
+  return parsed.data;
+}
+
+function userPrompt(ctx: ExtractionContext): string {
+  return `Current date/time (write time): ${formatNow(ctx.createdAt, ctx.timezone)}
 
 Raw memory:
 """
 ${ctx.rawText}
-"""`,
-    // CLIProxy + some Gemini models return ```json ... ``` or slightly invalid
-    // JSON even when json_schema is requested. Repair before schema validation.
-    experimental_repairText: async ({ text }) => stripJsonFences(text),
-  });
-  return object;
+"""`;
+}
+
+/**
+ * Stage 2.1–2.4: the single structured-extraction call (spec 02 §2).
+ *
+ * Primary path: generateObject (json_schema when the provider supports it).
+ * Fallback: generateText + JSON repair — needed for Antigravity/CLIProxy Flash
+ * which often ignores json_schema and returns fenced / slightly invalid JSON,
+ * or tiny invalid payloads that make generateObject throw after retries.
+ */
+export async function extract(ctx: ExtractionContext): Promise<Extraction> {
+  const prompt = userPrompt(ctx);
+
+  try {
+    const { object } = await generateObject({
+      model: ingestionModel,
+      schema: ExtractionSchema,
+      system: SYSTEM_PROMPT,
+      prompt,
+      // CLIProxy + some Gemini models return ```json ... ``` or slightly invalid
+      // JSON even when json_schema is requested. Repair before schema validation.
+      experimental_repairText: async ({ text }) => stripJsonFences(text),
+    });
+    return object;
+  } catch (primaryErr) {
+    log.warn("generateObject extraction failed; trying generateText JSON fallback", {
+      message:
+        primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+    });
+
+    const { text } = await generateText({
+      model: ingestionModel,
+      system: `${SYSTEM_PROMPT}
+
+OUTPUT RULES (strict):
+- Reply with ONE JSON object only. No markdown fences, no commentary.
+- Match the extraction schema fields exactly.
+- Use null or [] when a field does not apply. Never invent events not in the memory.`,
+      prompt,
+    });
+
+    try {
+      return parseExtractionJson(text);
+    } catch (fallbackErr) {
+      log.error("extraction fallback also failed", {
+        primary:
+          primaryErr instanceof Error ? primaryErr.message : String(primaryErr),
+        fallback:
+          fallbackErr instanceof Error
+            ? fallbackErr.message
+            : String(fallbackErr),
+        textHead: (text ?? "").slice(0, 200),
+      });
+      // Last resort: empty-but-valid extraction so the memory still processes
+      // (embeds + status=processed). Better than burning 5 retries to 'failed'.
+      // Reflections and short lines often hit this path on flaky proxies.
+      return ExtractionSchema.parse({
+        occurredAt: null,
+        types: ["episodic"],
+        entities: [],
+        facts: [],
+        intent: null,
+        standingRule: null,
+        openLoops: [],
+        resolvesLoop: null,
+      });
+    }
+  }
 }

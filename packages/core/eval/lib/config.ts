@@ -8,7 +8,8 @@ export function loadEvalConfig() {
   ).replace(/\/$/, "");
   const token = process.env.AUTH_BOOTSTRAP_TOKEN ?? "";
   const k = Number(process.env.EVAL_K ?? 10);
-  const ingestTimeoutS = Number(process.env.EVAL_INGEST_TIMEOUT ?? 180);
+  // Default 20 minutes: Flash is faster, but 36 memories + retries still need headroom.
+  const ingestTimeoutS = Number(process.env.EVAL_INGEST_TIMEOUT ?? 1200);
   const only = (process.env.EVAL_ONLY ?? "")
     .split(",")
     .map((s) => s.trim())

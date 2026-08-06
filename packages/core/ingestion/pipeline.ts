@@ -96,9 +96,9 @@ export async function runIngestion(memoryId: string): Promise<void> {
   });
 
   // 3. Temporal resolution — resolved event time for the memory.
-  const occurredAt = parseDate(extraction.occurredAt) ?? memory.occurredAt ?? null;
+   const occurredAt = parseDate(extraction.occurredAt) ?? memory.occurredAt ?? null;
 
-  // 4. Multi-representation embeddings (§2.6), batched into ONE embedMany call.
+  // 4. Multi-representation embeddings, batched into ONE embedMany call.
   const embeddings = await embedExtraction(memory.rawText, extraction);
 
   // 5. Entity extraction + linking (§2.3).

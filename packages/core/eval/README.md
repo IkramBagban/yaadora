@@ -4,6 +4,22 @@ Retrieval accuracy **and** honest ingestion are the product. This harness
 measures both against a golden life-history, over the **real** HTTP stack
 (server + worker + models + Postgres). No mocks.
 
+## Does eval create a new user?
+
+**No (not per run).** Eval authenticates with the **bootstrap bearer**
+(`AUTH_BOOTSTRAP_TOKEN` + `AUTH_ALLOW_BOOTSTRAP=true`). On server boot,
+`ensureBootstrapUser()` loads or creates **one** local user:
+
+- email: `SEED_USER_EMAIL` (default `owner@yaadora.local`)
+- timezone: `SEED_USER_TIMEZONE` (default `UTC`)
+
+Every eval run reuses that same user. Memories are seeded with stable
+`clientId`s (Redis idempotency) so re-runs usually hit the same rows instead of
+duplicating forever. It is **not** a Clerk sign-up and **not** a fresh user each
+time.
+
+Never enable bootstrap auth on a public / production VM.
+
 ## Commands
 
 | Command | What it tests |
@@ -73,7 +89,7 @@ Categories: `recall`, `entity-completeness`, `entity-collision`, `supersession`,
 | `YAADORA_SERVER_URL` | `http://localhost:3000` | Server base |
 | `AUTH_BOOTSTRAP_TOKEN` | — **required** | Bootstrap bearer |
 | `EVAL_K` | `10` | Citation depth for recall@k / MRR |
-| `EVAL_INGEST_TIMEOUT` | `180` | Seconds to wait for processing |
+| `EVAL_INGEST_TIMEOUT` | `1200` | Seconds to wait for processing (20 min default) |
 | `EVAL_ONLY` | — | Comma-separated case / clientId / global id subset |
 | `EVAL_MIN_INGEST_PASS` | `0.85` | Ingest pass-rate gate |
 | `EVAL_REQUIRE_ALL_PROCESSED` | `1` | Fail if any memory failed ingestion |
@@ -83,17 +99,60 @@ Categories: `recall`, `entity-completeness`, `entity-collision`, `supersession`,
 | `EVAL_MIN_ANSWER_QUALITY` | `0.75` | Fraction of cases with answer patterns ok |
 | `EVAL_MIN_RETRIEVE_PASS` | `0.8` | Overall retrieve case pass-rate |
 | `EVAL_RETRIEVE_RESEED` | `0` | If `1`, retrieve seeds dataset when state missing |
+| `YAADORA_USAGE_TRACK` | on if `REDIS_URL` set | Set `0` to disable Redis token tracking |
+| `EVAL_TOKEN_DETAIL` | `1` | Set `0` to omit per-call `events[]` from JSON (keep aggregates only) |
+| `SEED_USER_EMAIL` | `owner@yaadora.local` | Bootstrap eval user email (server) |
+| `REDIS_URL` | — | **Required** for token tracking across worker + server |
 
 Exit codes: `0` = gates passed, `1` = gate failed, `2` = setup error.
+
+## Token consumption
+
+LLM calls run in the **worker** (ingest) and **server** (Ask). The harness is a
+third process, so usage is collected via **Redis**:
+
+1. Eval starts a session id and sets phase `ingest` / `retrieve`
+2. Model middleware on server + worker appends each call’s tokens to Redis
+3. Report prints rollups and writes them into the JSON result
+
+You’ll see:
+
+- **total** — all calls in the session  
+- **byPhase** — `ingest` vs `retrieve`  
+- **byTier** — `ingestion` / `reasoning` / `fast`  
+- **byModel** — provider:model id  
+- **events[]** — every individual call (disable with `EVAL_TOKEN_DETAIL=0`)
+
+**Important:** restart **server** and **worker** after pulling this so they load
+the usage middleware. Both must share the same `REDIS_URL` as the eval process.
+
+Example snippet from `latest-ingest.json`:
+
+```json
+"tokens": {
+  "sessionId": "eval-ingest-…",
+  "total": { "calls": 42, "inputTokens": 120000, "outputTokens": 18000, "totalTokens": 138000 },
+  "byPhase": { "ingest": { "…" }, "retrieve": { "calls": 0 } },
+  "byTier": { "ingestion": { "…" } },
+  "events": [ { "model": "…", "tier": "ingestion", "inputTokens": 800, "…" } ]
+}
+```
 
 ## Results
 
 Written under `packages/core/eval/results/` (gitignored recommended):
 
-- `eval-state.json` — clientId map for retrieve-after-ingest
-- `eval-ingest-*.json` / `latest-ingest.json`
-- `eval-retrieve-*.json` / `latest-retrieve.json`
-- `eval-all-*.json` / `latest.json`
+| File | When |
+|------|------|
+| **`live-ingest.json`** | **Updated as each memory finishes** (status + checks so far) — open mid-run |
+| `latest-ingest.json` | Final ingest report |
+| `eval-ingest-*.json` | Timestamped final copy |
+| `eval-state.json` | clientId map for retrieve-after-ingest |
+| `latest-retrieve.json` / `latest.json` | Retrieve / full pipeline |
+
+During `eval:ingest` the terminal prints one line per memory (`OK` / `FAIL` + clientId)
+and immediate check results (facts/entities counts). **Timeout no longer aborts
+without a report** — it scores whatever finished and still writes JSON.
 
 ## Layout
 

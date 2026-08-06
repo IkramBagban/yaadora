@@ -147,11 +147,43 @@ export async function getMemoryDetail(
   };
 }
 
+export type SettleEvent = {
+  memoryId: string;
+  clientId?: string;
+  status: "processed" | "failed";
+  /** running totals */
+  processed: number;
+  failed: number;
+  pending: number;
+  total: number;
+};
+
 export async function waitForProcessing(
   cfg: EvalConfig,
   ids: string[],
-): Promise<{ processed: string[]; failed: string[] }> {
+  opts?: {
+    /** memoryId → clientId for human-readable logs */
+    idToClient?: Map<string, string>;
+    /** called once per memory when it leaves pending */
+    onSettle?: (ev: SettleEvent) => void | Promise<void>;
+    /**
+     * If true (default), timed-out pending memories are returned as stillPending
+     * instead of throwing — so the harness can score what finished and write JSON.
+     */
+    softTimeout?: boolean;
+  },
+): Promise<{
+  processed: string[];
+  failed: string[];
+  stillPending: string[];
+  timedOut: boolean;
+}> {
+  const softTimeout = opts?.softTimeout !== false;
+  const idToClient = opts?.idToClient;
   console.log(`Waiting for ingestion (timeout ${cfg.ingestTimeoutS}s) ...`);
+  console.log(
+    `  (live updates: each memory prints OK/FAIL as the worker finishes it)\n`,
+  );
   const deadline = Date.now() + cfg.ingestTimeoutS * 1000;
   const pending = new Set(ids);
   const failed: string[] = [];
@@ -160,33 +192,63 @@ export async function waitForProcessing(
   while (pending.size > 0 && Date.now() < deadline) {
     for (const id of [...pending]) {
       const status = await getMemoryStatus(cfg, id);
-      if (status === "processed") {
-        pending.delete(id);
-        processed.push(id);
-      } else if (status === "failed") {
-        console.warn(
-          `  WARN memory ${id} ingestion FAILED — derived state will be empty.`,
-        );
-        pending.delete(id);
-        failed.push(id);
+      if (status !== "processed" && status !== "failed") continue;
+
+      pending.delete(id);
+      if (status === "processed") processed.push(id);
+      else failed.push(id);
+
+      const clientId = idToClient?.get(id);
+      const label = clientId ?? id.slice(0, 8);
+      const done = processed.length + failed.length;
+      const mark = status === "processed" ? "OK  " : "FAIL";
+      // Full line (not \r) so the terminal keeps a scrollable history.
+      console.log(
+        `  [${mark}] ${String(done).padStart(2)}/${ids.length}  ${label.padEnd(22)}  ${status}${clientId ? `  (${id.slice(0, 8)}…)` : ""}`,
+      );
+
+      if (opts?.onSettle) {
+        await opts.onSettle({
+          memoryId: id,
+          clientId,
+          status,
+          processed: processed.length,
+          failed: failed.length,
+          pending: pending.size,
+          total: ids.length,
+        });
       }
     }
     if (pending.size > 0) {
+      const elapsed = Math.round((Date.now() - (deadline - cfg.ingestTimeoutS * 1000)) / 1000);
       process.stdout.write(
-        `  ${ids.length - pending.size}/${ids.length} processed\r`,
+        `  … waiting  ok=${processed.length} fail=${failed.length} pending=${pending.size}  t=${elapsed}s/${cfg.ingestTimeoutS}s\r`,
       );
       await Bun.sleep(2000);
     }
   }
-  if (pending.size > 0) {
-    throw new Error(
-      `timed out: ${pending.size} memories still not processed after ${cfg.ingestTimeoutS}s`,
+
+  const stillPending = [...pending];
+  const timedOut = stillPending.length > 0;
+  // Clear the spinner line
+  process.stdout.write(" ".repeat(80) + "\r");
+
+  if (timedOut) {
+    console.warn(
+      `\n  TIMEOUT: ${stillPending.length} still pending after ${cfg.ingestTimeoutS}s ` +
+        `(ok=${processed.length}, fail=${failed.length}). Scoring what we have…`,
+    );
+    if (!softTimeout) {
+      throw new Error(
+        `timed out: ${stillPending.length} memories still not processed after ${cfg.ingestTimeoutS}s`,
+      );
+    }
+  } else {
+    console.log(
+      `\n  all ${ids.length} settled (ok=${processed.length}, fail=${failed.length}).`,
     );
   }
-  console.log(
-    `  all ${ids.length} settled (${processed.length} processed, ${failed.length} failed).        `,
-  );
-  return { processed, failed };
+  return { processed, failed, stillPending, timedOut };
 }
 
 export interface AskDone {

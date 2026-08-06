@@ -21,6 +21,24 @@ export interface StageSummary {
   metrics: Record<string, number | string | boolean | null>;
 }
 
+export interface TokenTotals {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface TokenUsageBlock {
+  sessionId: string;
+  total: TokenTotals;
+  byPhase: Record<string, TokenTotals>;
+  byTier: Record<string, TokenTotals>;
+  byModel: Record<string, TokenTotals>;
+  byLabel: Record<string, TokenTotals>;
+  /** full per-call log when EVAL_TOKEN_DETAIL=1 (default on) */
+  events?: Array<Record<string, unknown>>;
+}
+
 export interface EvalReport {
   ranAt: string;
   command: "ingest" | "retrieve" | "all";
@@ -29,6 +47,10 @@ export interface EvalReport {
   gatesPassed: boolean;
   /** clientId → memoryId map from the last seed (if any) */
   clientToId?: Record<string, string>;
+  /** LLM token consumption (worker + server, via Redis) */
+  tokens?: TokenUsageBlock;
+  /** Which local user eval auth bound to (bootstrap user email) */
+  bootstrapUserEmail?: string;
 }
 
 export interface EvalState {
