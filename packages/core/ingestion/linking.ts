@@ -243,12 +243,13 @@ export async function linkEntities(params: {
   const resolution: EntityResolution = new Map();
 
   for (const mention of mentions) {
+
     const candidates = await findEntityCandidates({
       userId,
       type: mention.type,
       nameGuess: mention.canonicalGuess,
       embedding: mention.embedding,
-      limit: 5,
+      limit: 5, 
     });
 
     let entityId: string | null = null;
@@ -305,8 +306,8 @@ export async function linkExtractedEntities(params: {
 }): Promise<EntityResolution> {
   const { userId, memoryId, entities, embeddings, occurredAt, memoryText } = params;
   const mentions: MentionInput[] = entities.map((e, i) => ({
-    surface: e.surface,
-    type: e.type,
+    surface: e.surface, //  the raw text mention, e.g. "Urhan", "the cat", "myself"
+    type: e.type, // 
     canonicalGuess: e.canonicalGuess,
     embedding: embeddings[i] ?? [],
   }));

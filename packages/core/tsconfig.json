@@ -1,8 +1,12 @@
 {
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["bun"]
   },
   "include": ["."],
-  "exclude": ["dist", "build", "node_modules", "eval", "**/*.test.ts"]
+  "exclude": ["dist", "build", "node_modules"]
 }

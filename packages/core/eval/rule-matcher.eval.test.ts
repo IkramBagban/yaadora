@@ -21,7 +21,9 @@ const hasEmbed =
     ? Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY)
     : Boolean(process.env.OPENAI_API_KEY);
 const hasLlm = Boolean(
-  process.env.GROQ_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  process.env.GROQ_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.DEEPSEEK_API_KEY,
 );
 const runEval = hasDb && hasEmbed && hasLlm;
 const evalTest = runEval ? test : test.skip;

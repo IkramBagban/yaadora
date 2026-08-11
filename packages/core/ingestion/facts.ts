@@ -36,7 +36,7 @@ export async function insertExtractedFacts(params: {
     const row: NewFact = {
       userId,
       subjectId: resolveEntity(f.subject, resolution),
-      predicate: f.predicate,
+      predicate: f.predicate, // predicate means the verb or relation in the fact, e.g. "is", "has", "owns", etc  .predicate is always required, but we default to "is" for a reflection
       objectText: f.object,
       objectId: resolveEntity(f.object, resolution),
       factText: f.factText,
@@ -51,7 +51,7 @@ export async function insertExtractedFacts(params: {
       userId,
       memoryId,
       fact: row,
-      embedding,
+      embedding,  
       occurredAt,
     });
   }

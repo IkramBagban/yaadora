@@ -47,11 +47,22 @@ async function cleanup(userId: string): Promise<void> {
   await db.delete(users).where(eq(users.id, userId));
 }
 
-async function seedMemory(userId: string, rawText: string): Promise<string> {
+async function seedMemory(
+  userId: string,
+  rawText: string,
+  /** Defaults to well outside the 48h already-known window relative to NOW. */
+  createdAt: Date = new Date(NOW.getTime() - 10 * DAY_MS),
+): Promise<string> {
   const { db, memories } = require("@repo/db");
   const [m] = await db
     .insert(memories)
-    .values({ userId, rawText, source: "manual", status: "processed" })
+    .values({
+      userId,
+      rawText,
+      source: "manual",
+      status: "processed",
+      createdAt,
+    })
     .returning({ id: memories.id });
   return m.id;
 }
@@ -328,16 +339,16 @@ dbTest("scenario 7: a multi-entity decision turn links both, within the 2-cap", 
     await seedEntity(userId, "Meera");
     await seedEntity(userId, "Bangalore", "place");
 
+    // Appearance order drives the 2-cap (spec 02 §5.2): people first so both
+    // fit; place would win a slot if it appeared earlier and crowd one out.
     const links = await linkTurnEntities({
       userId,
       userTurn:
-        "Thinking about the Bangalore move — I should talk it through with Meera and Aditya.",
+        "I should talk it through with Meera and Aditya about the Bangalore move.",
     });
     expect(links.length).toBeLessThanOrEqual(2);
     const names = links.map((l: { canonicalName: string }) => l.canonicalName);
-    // Both people are linked (place may or may not make the 2-cap).
-    expect(names).toContain("Meera");
-    expect(names).toContain("Aditya");
+    expect(names).toEqual(["Meera", "Aditya"]);
 
     for (const l of links) {
       const ctx = await assembleEntityContext(userId, l.entityId);

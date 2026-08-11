@@ -71,8 +71,8 @@ export const ExtractionSchema = z.object({
     .array(
       z.object({
         subject: looseString.catch("user"),
-        predicate: looseString.catch("is"),
-        object: looseString.catch(""),
+        predicate: looseString.catch("is"), // predicate means the verb or relation in the fact, e.g. "is", "has", "owns", etc .predicate is always required, but we default to "is" for a reflection
+        object: looseString.catch(""), // the object of the fact, e.g. "a doctor", "a cat", "a new job"
         factText: looseString.catch(""),
         validFrom: z.string().nullable().catch(null),
         factType: z.enum(FACT_TYPES).catch("episodic"),

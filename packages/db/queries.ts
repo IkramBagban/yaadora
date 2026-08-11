@@ -39,9 +39,11 @@ export async function findEntityCandidates(params: {
   limit?: number;
 }): Promise<EntityCandidate[]> {
   const { userId, type, nameGuess, embedding, limit = 5 } = params;
+
+  // this is just an expession to  compute vector distance between the incoming embedding and stored profile_embedding
   const distanceExpr =
     embedding && embedding.length
-      ? sql`(profile_embedding <=> ${toVectorLiteral(embedding)}::vector)`
+      ? sql`(profile_embedding <=> ${toVectorLiteral(embedding)}::vector)` // profile_embedding <=> '[0.1,0.2,0.3]'::vector
       : sql`NULL`;
 
   const rows = await db.execute<{
@@ -70,7 +72,7 @@ export async function findEntityCandidates(params: {
     type: String(r.type),
     canonicalName: String(r.canonical_name),
     aliases: (r.aliases as string[] | null) ?? [],
-    profile: (r.profile as string | null) ?? null,
+    profile: (r.profile as string | null) ?? null, //  consolidated summary, rebuilt nightly
     mentionCount: Number(r.mention_count),
     distance: r.distance == null ? null : Number(r.distance),
     nameMatch: Boolean(r.name_match),

@@ -60,7 +60,8 @@ export const RETRIEVE_CASES: RetrieveCase[] = [
     question: "Which database did we settle on for the new project?",
     category: "recall",
     expect: ["g-proj-postgres"],
-    answerMustMatch: ["postgres", "postgresql", "pgvector"],
+    // One OR-group: any of these names is enough (model may say only "Postgres").
+    answerMustMatch: ["postgres|postgresql|pgvector"],
     note: "Postgres+pgvector decision.",
   },
   {
@@ -76,7 +77,7 @@ export const RETRIEVE_CASES: RetrieveCase[] = [
     question: "What trip am I planning next?",
     category: "recall",
     expect: ["g-trip-japan"],
-    answerMustMatch: ["japan", "tokyo", "kyoto"],
+    answerMustMatch: ["japan|tokyo|kyoto"],
     note: "Future Japan trip surfaces.",
   },
   {
@@ -163,7 +164,7 @@ export const RETRIEVE_CASES: RetrieveCase[] = [
     category: "supersession",
     expect: ["g-sleep-new"],
     forbid: ["g-sleep-old"],
-    answerMustMatch: ["midnight", "past midnight", "late"],
+    answerMustMatch: ["midnight|past midnight|late"],
     note: "Current sleep reality.",
   },
 
@@ -189,7 +190,7 @@ export const RETRIEVE_CASES: RetrieveCase[] = [
     question: "What kind of food does Sarah like?",
     category: "factual",
     expect: ["g-pref-food-sarah"],
-    answerMustMatch: ["italian", "carbonara"],
+    answerMustMatch: ["italian|carbonara"],
     note: "Fact on linked entity Sarah.",
   },
   {

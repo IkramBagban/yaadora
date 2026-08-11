@@ -86,29 +86,37 @@ const baseExtraction = {
 
 describe("procedural extraction fields", () => {
   test("requires an explicit shape for a standing rule and open loop", () => {
-    expect(
-      ExtractionSchema.safeParse({
-        ...baseExtraction,
-        standingRule: { ruleText: "Review the post", triggerText: "before posting" },
-        openLoops: [
-          {
-            kind: "unresolved_conflict",
-            title: "Equity split with Rahul is unresolved",
-            entityRef: "Rahul",
-            dueAt: null,
-          },
-        ],
-        resolvesLoop: null,
-      }).success,
-    ).toBe(true);
-    expect(
-      ExtractionSchema.safeParse({
-        ...baseExtraction,
-        standingRule: { ruleText: "", triggerText: "before posting" },
-        openLoops: [],
-        resolvesLoop: null,
-      }).success,
-    ).toBe(false);
+    const good = ExtractionSchema.safeParse({
+      ...baseExtraction,
+      standingRule: { ruleText: "Review the post", triggerText: "before posting" },
+      openLoops: [
+        {
+          kind: "unresolved_conflict",
+          title: "Equity split with Rahul is unresolved",
+          entityRef: "Rahul",
+          dueAt: null,
+        },
+      ],
+      resolvesLoop: null,
+    });
+    expect(good.success).toBe(true);
+    if (good.success) {
+      expect(good.data.standingRule?.ruleText).toBe("Review the post");
+      expect(good.data.openLoops).toHaveLength(1);
+    }
+
+    // Empty ruleText must not fail the whole extraction parse (proxy models
+    // often emit partial objects). Coerce to standingRule=null instead.
+    const emptyRule = ExtractionSchema.safeParse({
+      ...baseExtraction,
+      standingRule: { ruleText: "", triggerText: "before posting" },
+      openLoops: [],
+      resolvesLoop: null,
+    });
+    expect(emptyRule.success).toBe(true);
+    if (emptyRule.success) {
+      expect(emptyRule.data.standingRule).toBeNull();
+    }
   });
 });
 

@@ -105,7 +105,11 @@ describe("seam hard-block fixtures (deterministic)", () => {
 // LLM seam judgment is optional and quota-heavy. Opt in with RUN_SEAM_LLM_TEST=1.
 const runSeamLlm =
   process.env.RUN_SEAM_LLM_TEST === "1" &&
-  Boolean(process.env.GROQ_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
+  Boolean(
+    process.env.GROQ_API_KEY ||
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+      process.env.DEEPSEEK_API_KEY,
+  );
 const llmTest = runSeamLlm ? test : test.skip;
 
 const SAMPLE_CANDIDATE: AwarenessAttachment = {

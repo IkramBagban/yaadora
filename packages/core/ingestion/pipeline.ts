@@ -105,7 +105,7 @@ export async function runIngestion(memoryId: string): Promise<void> {
   const resolution = await linkExtractedEntities({
     userId: memory.userId,
     memoryId,
-    entities: extraction.entities,
+    entities: extraction.entities, // i.e [{ surface: "Alice", type: "person", canonicalGuess: "Alice"}, ...]
     embeddings: embeddings.mentions,
     occurredAt,
     memoryText: memory.rawText,

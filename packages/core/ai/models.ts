@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI, google } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import {
   embed,
   embedMany,
@@ -16,12 +16,13 @@ const log = createLogger("ai");
 
 /**
  * LLM provider is chosen dynamically from AI_PROVIDER:
- *   "groq" | "google" | "openai" | "antigravity" | "opencode"
+ *   "groq" | "google" | "openai" | "antigravity" | "opencode" | "deepseek"
  *
  * Prod default stays "groq". Local subsidized models go through CLIProxyAPI:
  *   AI_PROVIDER=openai        # ChatGPT/Codex GPT models
  *   AI_PROVIDER=antigravity   # Google Antigravity Gemini models
  *   AI_PROVIDER=opencode      # OpenCode free DeepSeek V4 Flash for local/eval use
+ *   AI_PROVIDER=deepseek      # DeepSeek's official OpenAI-compatible API
  *   OPENAI_BASE_URL=http://127.0.0.1:8317/v1
  *   OPENAI_API_KEY=<local proxy key>
  * Leave OPENAI_BASE_URL unset with AI_PROVIDER=openai to hit real OpenAI API.
@@ -43,7 +44,13 @@ const log = createLogger("ai");
  * embeddings use the official OpenAI host unless OPENAI_EMBEDDING_BASE_URL is set.
  */
 
-type Provider = "groq" | "google" | "openai" | "antigravity" | "opencode";
+type Provider =
+  | "groq"
+  | "google"
+  | "openai"
+  | "antigravity"
+  | "opencode"
+  | "deepseek";
 type Tier = "ingestion" | "reasoning" | "fast";
 
 const PROVIDERS: readonly Provider[] = [
@@ -52,6 +59,7 @@ const PROVIDERS: readonly Provider[] = [
   "openai",
   "antigravity",
   "opencode",
+  "deepseek",
 ] as const;
 
 function parseProvider(raw: string | undefined): Provider {
@@ -102,6 +110,15 @@ const MODEL_IDS: Record<Provider, Record<Tier, string>> = {
     ingestion: "deepseek-v4-flash-free",
     reasoning: "deepseek-v4-flash-free",
     fast: "deepseek-v4-flash-free",
+  },
+  // Official DeepSeek API (api.deepseek.com). Default all tiers to V4 Flash —
+  // the real paid model, not OpenCode's free flash and not the legacy
+  // deepseek-chat id. Override per tier if needed, e.g.:
+  //   AI_MODEL_REASONING=deepseek-v4-pro
+  deepseek: {
+    ingestion: "deepseek-v4-flash",
+    reasoning: "deepseek-v4-flash",
+    fast: "deepseek-v4-flash",
   },
 };
 
@@ -182,6 +199,44 @@ function withKeyFallback(models: LanguageModelV4[]): LanguageModelV4 {
   });
 }
 
+/**
+ * DeepSeek's chat-completions API currently accepts JSON-object mode but can
+ * reject OpenAI's `json_schema` response format. AI SDK's structured-output
+ * helpers normally send a schema in that format. Convert it to JSON-object
+ * mode and place the same schema in a system instruction, so `generateObject`
+ * still validates the final object locally without an initial failing request.
+ */
+const deepSeekJsonObjectMiddleware = {
+  specificationVersion: "v4" as const,
+  transformParams: async ({
+    params,
+  }: {
+    params: LanguageModelV4CallOptions;
+  }): Promise<LanguageModelV4CallOptions> => {
+    if (params.responseFormat?.type !== "json" || !params.responseFormat.schema) {
+      return params;
+    }
+
+    const schemaInstruction =
+      "Return only a valid JSON object that conforms to this JSON Schema. " +
+      "Do not include markdown, explanations, or additional keys.\n\n" +
+      JSON.stringify(params.responseFormat.schema);
+
+    return {
+      ...params,
+      // No schema here makes @ai-sdk/openai emit { type: "json_object" }.
+      responseFormat: { type: "json" },
+      prompt: [
+        {
+          role: "system",
+          content: schemaInstruction,
+        },
+        ...params.prompt,
+      ],
+    };
+  },
+};
+
 /** Build a factory that turns an API key into a model for the active provider. */
 function makeModelFactory(
   provider: Provider,
@@ -194,14 +249,20 @@ function makeModelFactory(
   if (
     provider === "openai" ||
     provider === "antigravity" ||
-    provider === "opencode"
+    provider === "opencode" ||
+    provider === "deepseek"
   ) {
     // These providers use OpenAI-compatible HTTP. OpenCode's free endpoint is
     // public and keyless for now, but accepts OPENAI_API_KEY/OPENCODE_API_KEY
     // when credentials are required.
+    // DeepSeek must not inherit OPENAI_BASE_URL: local development often
+    // points that variable at CLIProxyAPI for other providers. Keep its
+    // official endpoint independent, with a dedicated override for a proxy.
     const baseURL =
-      process.env.OPENAI_BASE_URL?.trim() ||
-      (provider === "opencode" ? "https://opencode.ai/zen/v1" : undefined);
+      provider === "deepseek"
+        ? process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/v1"
+        : process.env.OPENAI_BASE_URL?.trim() ||
+          (provider === "opencode" ? "https://opencode.ai/zen/v1" : undefined);
     if (provider === "antigravity" && !baseURL) {
       log.warn(
         "AI_PROVIDER=antigravity but OPENAI_BASE_URL is unset — set it to CLIProxyAPI (e.g. http://127.0.0.1:8317/v1)",
@@ -226,7 +287,10 @@ function makeModelFactory(
         fetch: fetchWithoutAuth as typeof fetch,
       });
       // OpenCode free models expose /chat/completions, not /responses.
-      return (provider === "opencode"
+      // OpenCode and DeepSeek expose OpenAI-compatible chat completions. Do
+      // not use the Responses API here: DeepSeek's official compatibility API
+      // is chat-completions based.
+      return (provider === "opencode" || provider === "deepseek"
         ? client.chat(modelId)
         : client(modelId)) as LanguageModelV4;
     };
@@ -242,6 +306,7 @@ function keyEnvFor(provider: Provider): string | undefined {
   if (provider === "opencode") {
     return process.env.OPENCODE_API_KEY || process.env.OPENAI_API_KEY;
   }
+  if (provider === "deepseek") return process.env.DEEPSEEK_API_KEY;
   // openai + antigravity auth to CLIProxy / OpenAI-compatible with OPENAI_API_KEY
   if (provider === "openai" || provider === "antigravity") {
     return process.env.OPENAI_API_KEY;
@@ -260,8 +325,17 @@ function buildTierModel(tier: Tier): LanguageModel {
   const models =
     keys.length > 0 ? keys.map((key) => factory(key)) : [factory(undefined)];
 
+  const baseModel = withKeyFallback(models);
+  const compatibleModel =
+    provider === "deepseek"
+      ? wrapLanguageModel({
+          model: baseModel,
+          middleware: deepSeekJsonObjectMiddleware,
+        })
+      : baseModel;
+
   return wrapLanguageModel({
-    model: withKeyFallback(models),
+    model: compatibleModel,
     middleware: createLoggerMiddleware(`${provider}:${modelId}`, { tier }),
   });
 }

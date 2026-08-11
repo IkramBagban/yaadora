@@ -8,7 +8,7 @@
     ".": "./index.ts"
   },
   "scripts": {
-    "check-types": "tsc --noEmit",
+    "check-types": "tsc --noEmit -p tsconfig.build.json",
     "test": "bun test ingestion/pipeline.test.ts && bun test retrieval/context-pack.test.ts && bun test retrieval/rule-matcher.test.ts && bun test retrieval/rule-edit.test.ts && bun test retrieval/entity-linker.test.ts && bun test retrieval/entity-context.test.ts && bun test proactive/gates.test.ts && bun test proactive/intention.test.ts && bun test eval/prospection.eval.test.ts && bun test eval/seam-fixtures.eval.test.ts && bun test eval/rebuild-story.test.ts && bun test eval/rule-matcher.eval.test.ts && bun test eval/entity-context.eval.test.ts"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@types/bun": "1.3.14",
     "@types/node": "^22.15.3",
     "typescript": "^5.9.2"
   }

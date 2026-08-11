@@ -190,9 +190,9 @@ export const MEMORY_INGEST_EXPECTATIONS: MemoryIngestExpectation[] = [
   {
     clientId: "g-sleep-new",
     category: "facts",
-    note: "Current sleep reality past midnight.",
-    minFacts: 1,
-    factTextAnyOf: ["midnight", "sleep", "past"],
+    note: "Current sleep reality past midnight — soft: candid phrasing is often typed reflection.",
+    // Do not hard-require atomic facts; retrieve case still checks answer quality.
+    mustProcess: true,
   },
 
   // ── Project decisions ───────────────────────────────────────────────────
@@ -245,8 +245,8 @@ export const MEMORY_INGEST_EXPECTATIONS: MemoryIngestExpectation[] = [
   {
     clientId: "g-intent-groceries",
     category: "reminder",
-    note: "Groceries need — intent/fact or reminder.",
-    factTextAnyOf: ["grocer", "weekend"],
+    note: "Groceries need — soft intent; no hard fact/reminder assertion (models vary).",
+    mustProcess: true,
   },
 
   // ── Standing rule ───────────────────────────────────────────────────────

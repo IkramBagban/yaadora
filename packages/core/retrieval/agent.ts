@@ -1085,11 +1085,21 @@ export async function answerQuestion(params: {
         }
       },
     }),
+    // Catch models that try to emit a fake "json" tool call. Schema must be a
+    // real JSON-Schema object (`type: "object"`) — providers like DeepSeek
+    // reject z.any() (serializes as type:null) and break the whole Ask stream.
     json: tool({
       description:
         "Fallback tool to catch model hallucinations. Do not use this tool.",
-      inputSchema: z.any(),
-      execute: async (args) => {
+      inputSchema: z
+        .object({
+          data: z
+            .unknown()
+            .optional()
+            .describe("ignored payload if the model dumped raw JSON"),
+        })
+        .passthrough(),
+      execute: async () => {
         return { error: "Do not output raw json. Use standard text or other tools." };
       },
     }),

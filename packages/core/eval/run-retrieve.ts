@@ -40,13 +40,36 @@ import {
   reciprocalRank,
 } from "./metrics";
 
-/** Verbatim refusal marker from answer.ts (keep in sync). */
-const REFUSAL_MARKER = "don't have a memory about that";
+/**
+ * Honest "I don't know" detection.
+ *
+ * Product prompts (answer.ts + agent) tell the model to refuse *in natural
+ * language* and vary phrasing — not only the legacy marker
+ * "don't have a memory about that". Treat clear no-memory language as a
+ * refusal even when the model still cites nearby context (e.g. wife/dog while
+ * declining "sister's name").
+ */
+const REFUSAL_PATTERNS: RegExp[] = [
+  /don'?t have a memory about that/i,
+  /don'?t have (anything|any(thing)? (saved|on|about|in)|a (record|memory))/i,
+  // e.g. "I don't have any kids' names saved"
+  /don'?t have any .{0,48}(saved|on file|in (your )?memor|logged|recorded)/i,
+  /don'?t (seem to )?have (anything|any memory|that|info)/i,
+  /nothing (saved|on (file|record)|about that|in (your|the) memor)/i,
+  /no (memory|record|mention|info(rmation)?) (of|about|on|saved)/i,
+  /haven'?t (told|shared|saved|mentioned|recorded)/i,
+  /you haven'?t told me/i,
+  /not something (you'?ve|i have) (told|saved|recorded)/i,
+  /i (do not|don't) (know|recall) (your|a|any)/i,
+  /can'?t find (anything|any memory|a memory)/i,
+  /no (saved|stored) (memory|info)/i,
+];
 
 function isRefusal(askRes: AskResult): boolean {
   const done = askRes.done;
   if (!done) return true;
-  if (askRes.answerText.toLowerCase().includes(REFUSAL_MARKER)) return true;
+  const text = askRes.answerText;
+  if (REFUSAL_PATTERNS.some((re) => re.test(text))) return true;
   if (done.mode === "clarify") return true;
   if (done.citations.length === 0) return true;
   if (done.confidence <= 0.01) return true;
@@ -281,8 +304,10 @@ export async function runRetrieve(opts?: {
     (c) => c.details?.forbiddenHit === true,
   ).length;
 
-  const meanRecall = r3(mean(recalls));
-  const meanMRR = r3(mean(rrs));
+  // Empty retrieval slice (e.g. EVAL_ONLY=refusal cases) must not zero-out
+  // recall/MRR gates — there is nothing to score there.
+  const meanRecall = r3(recalls.length ? mean(recalls) : 1);
+  const meanMRR = r3(rrs.length ? mean(rrs) : 1);
   const refusalAcc =
     refusalChecks.length === 0
       ? 1

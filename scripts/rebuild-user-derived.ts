@@ -33,9 +33,14 @@ function assertProvider() {
   console.log("AI_PROVIDER=", p);
   console.log("OPENAI_BASE_URL=", process.env.OPENAI_BASE_URL);
   console.log("EMBEDDING_PROVIDER=", emb);
-  if (p !== "openai" && p !== "antigravity" && p !== "opencode") {
+  if (
+    p !== "openai" &&
+    p !== "antigravity" &&
+    p !== "opencode" &&
+    p !== "deepseek"
+  ) {
     throw new Error(
-      `Expected AI_PROVIDER=openai|antigravity|opencode for subsidized rebuild, got ${p}`,
+      `Expected AI_PROVIDER=openai|antigravity|opencode|deepseek for subsidized rebuild, got ${p}`,
     );
   }
 }
