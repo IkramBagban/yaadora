@@ -25,3 +25,14 @@ export const API_URL = resolveApiUrl(
 
 export const CLERK_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? 'pk_test_d2lyZWQtb3dsLTk3LmNsZXJrLmFjY291bnRzLmRldiQ';
+
+/** Must match server AUTH_BOOTSTRAP_TOKEN when using seed-user mobile login. */
+export const AUTH_BOOTSTRAP_TOKEN = (
+  process.env.EXPO_PUBLIC_AUTH_BOOTSTRAP_TOKEN ?? ''
+).trim();
+
+export const SEED_USER_EMAIL = (
+  process.env.EXPO_PUBLIC_SEED_USER_EMAIL ?? 'owner@yaadora.local'
+)
+  .trim()
+  .toLowerCase();

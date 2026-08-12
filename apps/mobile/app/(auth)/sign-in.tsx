@@ -17,6 +17,11 @@ import { PressableScale } from '../../src/components/PressableScale';
 import { SocialAuthRow } from '../../src/components/SocialAuthRow';
 import { clerkErrorMessage } from '../../src/auth/clerkError';
 import { enterApp } from '../../src/auth/authFlow';
+import {
+  activateBootstrapSession,
+  isBootstrapLoginEnabled,
+  isSeedUserEmail,
+} from '../../src/auth/bootstrapSession';
 import { useSocialAuth } from '../../src/auth/useSocialAuth';
 import { createMobileLogger } from '../../src/lib/log';
 import { fonts, radius, space } from '../../src/theme/tokens';
@@ -96,14 +101,40 @@ export default function SignInScreen() {
   };
 
   const onSubmitPassword = async () => {
-    if (!isLoaded || !signIn) {
-      log.warn('sign-in pressed before Clerk ready', { isLoaded, hasSignIn: Boolean(signIn) });
-      return;
-    }
     clearError();
     const trimmed = email.trim();
     if (!trimmed || !password) {
       setLocalError('Enter your email and password.');
+      return;
+    }
+
+    // Dev/eval: seed email + any password → bootstrap bearer (local owner user).
+    if (isBootstrapLoginEnabled() && isSeedUserEmail(trimmed)) {
+      setBusy(true);
+      log.info('bootstrap seed-user sign-in', { email: trimmed });
+      try {
+        const result = await activateBootstrapSession({
+          email: trimmed,
+          password,
+        });
+        if (!result.ok) {
+          setLocalError(result.error);
+          return;
+        }
+        log.info('bootstrap session active, entering app');
+        enterApp(router);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not sign in.';
+        log.error('bootstrap sign-in failed', { message });
+        setLocalError(message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (!isLoaded || !signIn) {
+      log.warn('sign-in pressed before Clerk ready', { isLoaded, hasSignIn: Boolean(signIn) });
       return;
     }
 
@@ -291,7 +322,12 @@ export default function SignInScreen() {
           accessibilityRole="button"
           accessibilityLabel={primaryLabel}
           onPress={onPrimary}
-          disabled={busy || !isLoaded}
+          disabled={
+            busy ||
+            (step === 'password' &&
+              !(isBootstrapLoginEnabled() && isSeedUserEmail(email.trim())) &&
+              !isLoaded)
+          }
           style={[styles.button, { backgroundColor: colors.accent, opacity: busy ? 0.6 : 1 }]}
         >
           {busy ? (

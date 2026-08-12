@@ -16,6 +16,7 @@ import {
 } from '@expo-google-fonts/instrument-sans';
 import { startSyncEngine } from '../src/capture/sync';
 import { ClerkTokenBridge } from '../src/auth/ClerkTokenBridge';
+import { useAppSession } from '../src/auth/useAppSession';
 import { CLERK_PUBLISHABLE_KEY } from '../src/api/config';
 import { createMobileLogger } from '../src/lib/log';
 import { useTheme } from '../src/theme/useTheme';
@@ -30,13 +31,13 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
  * screens can render (unmounting the navigator breaks Expo Router).
  */
 function AuthRedirect() {
-  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { isLoaded, isSignedIn, userId, isBootstrap } = useAppSession();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (!isLoaded) {
-      log.debug('auth gate waiting for Clerk to load');
+      log.debug('auth gate waiting for session to load');
       return;
     }
     const root = segments[0] as string | undefined;
@@ -44,6 +45,7 @@ function AuthRedirect() {
 
     log.debug('auth gate evaluate', {
       isSignedIn,
+      isBootstrap,
       clerkUserId: userId ?? null,
       segmentRoot: root ?? null,
       inAuthGroup,
@@ -55,19 +57,24 @@ function AuthRedirect() {
       log.info('redirect → sign-in', { from: root ?? '(none)' });
       router.replace('/(auth)/sign-in' as Href);
     } else if (isSignedIn && inAuthGroup) {
-      log.info('redirect → tabs', { clerkUserId: userId ?? null });
+      log.info('redirect → tabs', {
+        clerkUserId: userId ?? null,
+        isBootstrap,
+      });
       router.replace('/(tabs)' as Href);
     }
-  }, [isLoaded, isSignedIn, segments, router, userId]);
+  }, [isLoaded, isSignedIn, isBootstrap, segments, router, userId]);
 
   return null;
 }
 
 function RootNavigator() {
-  const { isLoaded } = useAuth();
+  // Clerk must finish loading even for bootstrap; useAppSession waits on both.
+  const { isLoaded: clerkLoaded } = useAuth();
+  const { isLoaded } = useAppSession();
   const { colors, dark } = useTheme();
 
-  if (!isLoaded) {
+  if (!clerkLoaded || !isLoaded) {
     return (
       <View
         style={{

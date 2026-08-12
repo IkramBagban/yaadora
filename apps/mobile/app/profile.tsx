@@ -4,11 +4,12 @@ import { useRouter, type Href } from 'expo-router';
 import { Image } from 'expo-image';
 import Feather from '@expo/vector-icons/Feather';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
-import { useUser, useClerk } from '@clerk/expo';
+import { useUser } from '@clerk/expo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../src/components/AppText';
 import { PressableScale } from '../src/components/PressableScale';
 import { api } from '../src/api/client';
+import { useAppSession } from '../src/auth/useAppSession';
 import { createMobileLogger } from '../src/lib/log';
 import { radius, space } from '../src/theme/tokens';
 import { useTheme } from '../src/theme/useTheme';
@@ -34,8 +35,9 @@ export default function ProfileScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, isLoaded } = useUser();
-  const { signOut } = useClerk();
+  const { user, isLoaded: clerkUserLoaded } = useUser();
+  const { signOut, isBootstrap, bootstrapEmail } = useAppSession();
+  const isLoaded = isBootstrap || clerkUserLoaded;
   const [signingOut, setSigningOut] = useState(false);
 
   // "Insights" toggle (spec 03 P4). null = not yet loaded; disables the switch.
@@ -84,7 +86,7 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: () => {
           setSigningOut(true);
-          log.info('signing out');
+          log.info('signing out', { isBootstrap });
           void signOut()
             .then(() => router.replace('/(auth)/sign-in' as Href))
             .catch((err) => {
@@ -96,11 +98,16 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const email = user?.primaryEmailAddress?.emailAddress ?? null;
-  const displayName = user?.fullName || user?.username || (email ? email.split('@')[0] : 'You');
-  const hasPassword = user?.passwordEnabled ?? false;
-  const externals = user?.externalAccounts ?? [];
-  const createdAt = user?.createdAt ?? null;
+  const email =
+    (isBootstrap ? bootstrapEmail : null) ??
+    user?.primaryEmailAddress?.emailAddress ??
+    null;
+  const displayName = isBootstrap
+    ? 'Eval owner'
+    : user?.fullName || user?.username || (email ? email.split('@')[0] : 'You');
+  const hasPassword = isBootstrap ? true : (user?.passwordEnabled ?? false);
+  const externals = isBootstrap ? [] : (user?.externalAccounts ?? []);
+  const createdAt = isBootstrap ? null : (user?.createdAt ?? null);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
@@ -206,12 +213,19 @@ export default function ProfileScreen() {
             Signed in with
           </AppText>
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
-            {hasPassword ? (
+            {isBootstrap ? (
+              <Row
+                icon={<Feather name="terminal" size={18} color={colors.ink2} />}
+                label="Eval bootstrap"
+                value="Local seed user — any password"
+              />
+            ) : null}
+            {!isBootstrap && hasPassword ? (
               <Row icon={<Feather name="mail" size={18} color={colors.ink2} />} label="Email & password" />
             ) : null}
             {externals.map((acc, i) => {
               const meta = PROVIDER_META[acc.provider] ?? { label: acc.provider, icon: 'circle-user' as const };
-              const showDivider = hasPassword || i > 0;
+              const showDivider = hasPassword || isBootstrap || i > 0;
               return (
                 <Row
                   key={acc.id}
@@ -222,7 +236,7 @@ export default function ProfileScreen() {
                 />
               );
             })}
-            {!hasPassword && externals.length === 0 ? (
+            {!isBootstrap && !hasPassword && externals.length === 0 ? (
               <Row icon={<Feather name="user" size={18} color={colors.ink2} />} label="Account" />
             ) : null}
           </View>

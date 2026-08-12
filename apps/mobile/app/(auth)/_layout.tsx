@@ -1,10 +1,10 @@
 import { Redirect, Stack } from 'expo-router';
-import { useAuth } from '@clerk/expo';
 import { View, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../src/theme/useTheme';
+import { useAppSession } from '../../src/auth/useAppSession';
 
 export default function AuthLayout() {
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn, isLoaded } = useAppSession();
   const { colors } = useTheme();
 
   if (!isLoaded) {

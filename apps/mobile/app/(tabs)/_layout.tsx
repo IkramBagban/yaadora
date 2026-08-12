@@ -1,10 +1,10 @@
 import { ActivityIndicator, View } from 'react-native';
 import { Redirect, type Href } from 'expo-router';
-import { useAuth } from '@clerk/expo';
 import { createMaterialTopTabNavigator, type MaterialTopTabNavigationOptions } from '@react-navigation/material-top-tabs';
 import { withLayoutContext } from 'expo-router';
 import { FloatingTabBar } from '../../src/components/FloatingTabBar';
 import { useTheme } from '../../src/theme/useTheme';
+import { useAppSession } from '../../src/auth/useAppSession';
 
 const { Navigator } = createMaterialTopTabNavigator();
 
@@ -17,7 +17,7 @@ export const MaterialTopTabs = withLayoutContext<
 
 export default function TabsLayout() {
   const { colors } = useTheme();
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAppSession();
 
   if (!isLoaded) {
     return (
