@@ -18,6 +18,14 @@ import { createMobileLogger } from '../lib/log';
 
 const log = createMobileLogger('auth:session');
 
+function readBootState() {
+  return {
+    hydrated: isBootstrapHydrated(),
+    active: isBootstrapSessionActive(),
+    email: getBootstrapSessionEmail(),
+  };
+}
+
 export function useAppSession(): {
   isLoaded: boolean;
   isSignedIn: boolean;
@@ -30,32 +38,38 @@ export function useAppSession(): {
 } {
   const { isLoaded: clerkLoaded, isSignedIn: clerkSignedIn, userId } = useAuth();
   const { signOut: clerkSignOut } = useClerk();
-  const [boot, setBoot] = useState(() => ({
-    hydrated: isBootstrapHydrated(),
-    active: isBootstrapSessionActive(),
-    email: getBootstrapSessionEmail(),
-  }));
+  const [boot, setBoot] = useState(readBootState);
 
   useEffect(() => {
-    // warn: visible in production logcat without EXPO_PUBLIC_DEBUG_AUTH.
+    // Subscribe FIRST so a synchronous hydrate completion cannot miss emit().
+    // (When bootstrap is disabled, hydrate finishes without awaiting SecureStore
+    // and used to emit before any listener was registered → spinner forever.)
+    const unsub = subscribeBootstrapSession(() => {
+      setBoot(readBootState());
+    });
+
     log.warn('hydrating bootstrap session', {
       clerkLoaded,
       clerkSignedIn: Boolean(clerkSignedIn),
+      alreadyHydrated: isBootstrapHydrated(),
     });
-    void hydrateBootstrapSession().then(() => {
-      log.warn('bootstrap hydrate finished', {
-        hydrated: isBootstrapHydrated(),
-        active: isBootstrapSessionActive(),
+
+    void hydrateBootstrapSession()
+      .catch((err) => {
+        log.warn('hydrateBootstrapSession rejected', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(() => {
+        // Always sync React state from module state — covers emit races and
+        // early-return when already hydrated.
+        setBoot(readBootState());
+        log.warn('bootstrap hydrate finished', readBootState());
       });
-    });
-    return subscribeBootstrapSession(() => {
-      setBoot({
-        hydrated: isBootstrapHydrated(),
-        active: isBootstrapSessionActive(),
-        email: getBootstrapSessionEmail(),
-      });
-    });
-  }, [clerkLoaded, clerkSignedIn]);
+
+    return unsub;
+    // Run once on mount. Re-running on clerkLoaded caused subscribe/emit races.
+  }, []);
 
   const isBootstrap = boot.active && Boolean(getBootstrapAuthToken());
   const isSignedIn = Boolean(clerkSignedIn) || isBootstrap;

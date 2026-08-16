@@ -15,6 +15,9 @@ const log = createMobileLogger('auth:bootstrap');
 
 const STORAGE_KEY = 'yaadora.bootstrapSession.v1';
 
+/** Don't let a hung SecureStore block the whole app boot forever. */
+const SECURE_STORE_TIMEOUT_MS = 2500;
+
 const SEED_EMAIL = (
   process.env.EXPO_PUBLIC_SEED_USER_EMAIL ?? 'owner@yaadora.local'
 )
@@ -43,6 +46,8 @@ const listeners = new Set<Listener>();
 
 let hydrated = false;
 let activeEmail: string | null = null;
+/** In-flight hydrate so concurrent callers share one pass. */
+let hydratePromise: Promise<void> | null = null;
 
 function emit(): void {
   for (const l of listeners) l();
@@ -71,36 +76,76 @@ export function getBootstrapAuthToken(): string | null {
   return BOOTSTRAP_TOKEN || null;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(t);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Load any persisted bootstrap session. Always marks hydrated (even when
+ * bootstrap is disabled or SecureStore fails) so the auth gate cannot hang.
+ *
+ * Safe to call multiple times; concurrent calls share one in-flight promise.
+ */
 export async function hydrateBootstrapSession(): Promise<void> {
   if (hydrated) return;
-  try {
-    if (!isBootstrapLoginEnabled()) {
+  if (hydratePromise) return hydratePromise;
+
+  hydratePromise = (async () => {
+    try {
+      if (!isBootstrapLoginEnabled()) {
+        activeEmail = null;
+        log.warn('bootstrap hydrate skipped (disabled on this build)');
+        return;
+      }
+      const raw = await withTimeout(
+        SecureStore.getItemAsync(STORAGE_KEY),
+        SECURE_STORE_TIMEOUT_MS,
+        'SecureStore.getItemAsync',
+      );
+      if (!raw) {
+        activeEmail = null;
+        return;
+      }
+      const parsed = JSON.parse(raw) as { email?: string };
+      const email = parsed.email?.trim().toLowerCase() ?? '';
+      if (email && isSeedUserEmail(email)) {
+        activeEmail = email;
+        log.warn('bootstrap session restored', { email });
+      } else {
+        activeEmail = null;
+        await withTimeout(
+          SecureStore.deleteItemAsync(STORAGE_KEY),
+          SECURE_STORE_TIMEOUT_MS,
+          'SecureStore.deleteItemAsync',
+        ).catch(() => {});
+      }
+    } catch (err) {
+      log.warn('bootstrap hydrate failed', {
+        message: err instanceof Error ? err.message : String(err),
+      });
       activeEmail = null;
-      return;
+    } finally {
+      hydrated = true;
+      hydratePromise = null;
+      emit();
     }
-    const raw = await SecureStore.getItemAsync(STORAGE_KEY);
-    if (!raw) {
-      activeEmail = null;
-      return;
-    }
-    const parsed = JSON.parse(raw) as { email?: string };
-    const email = parsed.email?.trim().toLowerCase() ?? '';
-    if (email && isSeedUserEmail(email)) {
-      activeEmail = email;
-      log.info('bootstrap session restored', { email });
-    } else {
-      activeEmail = null;
-      await SecureStore.deleteItemAsync(STORAGE_KEY).catch(() => {});
-    }
-  } catch (err) {
-    log.warn('bootstrap hydrate failed', {
-      message: err instanceof Error ? err.message : String(err),
-    });
-    activeEmail = null;
-  } finally {
-    hydrated = true;
-    emit();
-  }
+  })();
+
+  return hydratePromise;
 }
 
 /**
@@ -134,13 +179,17 @@ export async function activateBootstrapSession(params: {
   activeEmail = email;
   hydrated = true;
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify({ email }));
+    await withTimeout(
+      SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify({ email })),
+      SECURE_STORE_TIMEOUT_MS,
+      'SecureStore.setItemAsync',
+    );
   } catch (err) {
     log.warn('bootstrap persist failed', {
       message: err instanceof Error ? err.message : String(err),
     });
   }
-  log.info('bootstrap session activated', { email });
+  log.warn('bootstrap session activated', { email });
   emit();
   return { ok: true };
 }
@@ -148,11 +197,15 @@ export async function activateBootstrapSession(params: {
 export async function clearBootstrapSession(): Promise<void> {
   activeEmail = null;
   try {
-    await SecureStore.deleteItemAsync(STORAGE_KEY);
+    await withTimeout(
+      SecureStore.deleteItemAsync(STORAGE_KEY),
+      SECURE_STORE_TIMEOUT_MS,
+      'SecureStore.deleteItemAsync',
+    );
   } catch {
     /* ignore */
   }
   hydrated = true;
-  log.info('bootstrap session cleared');
+  log.warn('bootstrap session cleared');
   emit();
 }

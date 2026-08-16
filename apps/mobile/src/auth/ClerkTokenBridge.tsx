@@ -56,8 +56,8 @@ export function ClerkTokenBridge() {
   }
 
   useEffect(() => {
-    void hydrateBootstrapSession();
-    return subscribeBootstrapSession(() => {
+    // Subscribe before hydrate so a sync completion cannot miss the listener.
+    const unsub = subscribeBootstrapSession(() => {
       // Force re-register getter when bootstrap toggles.
       setAuthTokenGetter(async () => {
         const boot = getBootstrapAuthToken();
@@ -70,6 +70,8 @@ export function ClerkTokenBridge() {
         }
       });
     });
+    void hydrateBootstrapSession();
+    return unsub;
   }, [getToken, isSignedIn]);
 
   useEffect(() => {
