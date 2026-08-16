@@ -3,8 +3,13 @@
 // (packages/ui pulls 19.2.x) and the app + RN renderer end up on different
 // Reacts → "Invalid hook call". We watch the workspace, order resolution
 // project-first, and pin react/react-native to the app's own copy.
+//
+// IMPORTANT: deep imports like `react-native/Libraries/Core/InitializeCore`
+// must resolve via Node's require.resolve against the app package, NOT via
+// path.join + re-resolve (absolute paths + Bun's .bun layout break on EAS).
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
+const fs = require('fs');
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
@@ -16,33 +21,47 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-// NOTE: do NOT disableHierarchicalLookup here — Bun's isolated linker (.bun
-// store) relies on walking up to resolve nested deps like @expo/metro-runtime.
+// NOTE: do NOT disableHierarchicalLookup — Bun's isolated linker (.bun store)
+// relies on walking up to resolve nested deps like @expo/metro-runtime.
 
-// Force a SINGLE instance of React / React Native. extraNodeModules is only a
-// fallback; Bun's isolated linker still gives react-native its own react copy,
-// so we hard-redirect every react / react-native import (and their subpaths) to
-// the app's copy via resolveRequest.
-const singletons = {
-  react: path.resolve(projectRoot, 'node_modules/react'),
-  'react-native': path.resolve(projectRoot, 'node_modules/react-native'),
-};
+/**
+ * Resolve a package (or subpath) from the mobile app's dependency tree.
+ * Follows Bun/npm symlinks so Libraries/* files are found on EAS too.
+ */
+function resolveFromApp(moduleName) {
+  return require.resolve(moduleName, { paths: [projectRoot] });
+}
+
+/** True if this import must be forced onto the app's single react / RN copy. */
+function isSingletonModule(moduleName) {
+  return (
+    moduleName === 'react' ||
+    moduleName === 'react-native' ||
+    moduleName.startsWith('react/') ||
+    moduleName.startsWith('react-native/')
+  );
+}
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  for (const [name, dir] of Object.entries(singletons)) {
-    if (moduleName === name || moduleName.startsWith(name + '/')) {
-      const rest = moduleName.slice(name.length); // '' or '/sub/path'
-      return context.resolveRequest(
-        context,
-        rest ? path.join(dir, rest) : dir,
-        platform,
-      );
+  if (isSingletonModule(moduleName)) {
+    try {
+      const filePath = resolveFromApp(moduleName);
+      // Prefer realpath so Metro opens the file under .bun store, not a
+      // broken symlink in a partial node_modules layout.
+      const realPath = fs.existsSync(filePath)
+        ? fs.realpathSync(filePath)
+        : filePath;
+      return { type: 'sourceFile', filePath: realPath };
+    } catch {
+      // Fall through to default Metro resolution.
     }
   }
-  return defaultResolveRequest
-    ? defaultResolveRequest(context, moduleName, platform)
-    : context.resolveRequest(context, moduleName, platform);
+
+  if (defaultResolveRequest) {
+    return defaultResolveRequest(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
 };
 
 module.exports = config;
