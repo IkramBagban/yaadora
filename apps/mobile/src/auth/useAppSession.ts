@@ -37,7 +37,17 @@ export function useAppSession(): {
   }));
 
   useEffect(() => {
-    void hydrateBootstrapSession();
+    // warn: visible in production logcat without EXPO_PUBLIC_DEBUG_AUTH.
+    log.warn('hydrating bootstrap session', {
+      clerkLoaded,
+      clerkSignedIn: Boolean(clerkSignedIn),
+    });
+    void hydrateBootstrapSession().then(() => {
+      log.warn('bootstrap hydrate finished', {
+        hydrated: isBootstrapHydrated(),
+        active: isBootstrapSessionActive(),
+      });
+    });
     return subscribeBootstrapSession(() => {
       setBoot({
         hydrated: isBootstrapHydrated(),
@@ -45,11 +55,21 @@ export function useAppSession(): {
         email: getBootstrapSessionEmail(),
       });
     });
-  }, []);
+  }, [clerkLoaded, clerkSignedIn]);
 
   const isBootstrap = boot.active && Boolean(getBootstrapAuthToken());
   const isSignedIn = Boolean(clerkSignedIn) || isBootstrap;
   const isLoaded = clerkLoaded && boot.hydrated;
+
+  useEffect(() => {
+    log.warn('session load state', {
+      clerkLoaded,
+      bootstrapHydrated: boot.hydrated,
+      isLoaded,
+      isSignedIn,
+      isBootstrap,
+    });
+  }, [clerkLoaded, boot.hydrated, isLoaded, isSignedIn, isBootstrap]);
 
   const signOut = useCallback(async () => {
     log.info('sign out', { wasBootstrap: isBootstrap, wasClerk: Boolean(clerkSignedIn) });

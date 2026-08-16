@@ -21,7 +21,9 @@ function debugAuthEnabled(): boolean {
 }
 
 function threshold(): number {
-  // In production builds only show warn+ unless explicitly enabled.
+  // Production: warn+ by default. EXPO_PUBLIC_DEBUG_AUTH=1 enables full traces
+  // (info/debug) so boot/auth diagnostics are visible in logcat without a
+  // Metro connection.
   if (typeof __DEV__ !== 'undefined' && !__DEV__ && process.env.EXPO_PUBLIC_DEBUG_AUTH !== '1') {
     return LEVEL_ORDER.warn;
   }

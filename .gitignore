@@ -65,3 +65,5 @@ test-mock*.test.ts
 docs/
 *.md
 !README.md
+
+.env.prod
