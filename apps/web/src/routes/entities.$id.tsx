@@ -1,9 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { PlaceholderPage } from '../components/layout/PlaceholderPage'
+import { EntityProfilePage } from '../features/entities/EntityProfilePage'
 
 export const Route = createFileRoute('/entities/$id')({
-  component: function EntityDetailPage() {
+  component: function EntityDetailRoute() {
     const { id } = Route.useParams()
-    return <PlaceholderPage title={`Entity ${id}`} track="entities" />
+    return <EntityProfilePage entityId={id} />
   },
 })
