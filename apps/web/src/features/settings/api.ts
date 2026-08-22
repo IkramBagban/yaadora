@@ -1,6 +1,7 @@
 import { request } from '../../api/client'
 import type {
   DeviceTokenList,
+  MeProfile,
   PrivacyPatch,
   PrivacySettings,
   RebuildJob,

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle, Check } from 'lucide-react'
-import { cn } from '../../../lib/cn'
+import { cn } from '../../lib/cn'
 
 /** Local building blocks shared by the settings sections. Feature-scoped on
  * purpose — shared-infra (`components/ui`) is frozen for this track. */

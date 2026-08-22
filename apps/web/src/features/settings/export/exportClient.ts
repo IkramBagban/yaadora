@@ -1,5 +1,5 @@
-import { request } from '../../../../api/client'
-import type { EntityListItem, Fact, Memory, MemoryPage, Reminder, ReminderList, StandingRule } from '../../../../api/types'
+import { request } from '../../../api/client'
+import type { EntityListItem, Fact, Memory, MemoryPage, Reminder, ReminderList, StandingRule } from '../../../api/types'
 import type {
   ExportDigest,
   ExportOpenLoop,

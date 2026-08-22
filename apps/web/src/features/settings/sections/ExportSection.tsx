@@ -8,9 +8,9 @@ import {
   StatusBanner,
 } from '../ui'
 import type { ExportFormat } from '../types'
-import { collectAccountExport } from './export/exportClient'
-import { downloadTextFile, exportFileStem } from './export/download'
-import { buildMarkdownJournal } from './export/markdown'
+import { collectAccountExport } from '../export/exportClient'
+import { downloadTextFile, exportFileStem } from '../export/download'
+import { buildMarkdownJournal } from '../export/markdown'
 
 const FORMAT_OPTIONS = [
   { value: 'json' as const, label: 'JSON (everything)' },

@@ -1,4 +1,4 @@
-import type { Memory } from '../../../../api/types'
+import type { Memory } from '../../../api/types'
 import type { AccountExport } from './exportClient'
 
 /**
