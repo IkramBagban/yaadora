@@ -34,8 +34,10 @@ async function searchMemoriesAndFacts(q: string): Promise<{ query: string; memor
   return request(`/memories/search?${params.toString()}`)
 }
 
+/** GET /entities responds with an envelope: { entities: EntityListItem[] }. */
 async function listEntities(): Promise<EntityListItem[]> {
-  return request('/entities')
+  const data = await request<{ entities: EntityListItem[] }>('/entities')
+  return data.entities
 }
 
 /**

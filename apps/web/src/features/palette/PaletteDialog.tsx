@@ -40,12 +40,16 @@ export function PaletteDialog() {
   const rowIndices = useMemo(() => new Map(flat.map((item, index) => [item.id, index])), [flat])
 
   // Focus is a DOM side effect, not state sync — runs once per mount.
+  // aria-modal etiquette: restore focus to wherever it was before opening.
   useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
     inputRef.current?.focus()
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = previousOverflow
+      previouslyFocused?.focus()
     }
   }, [])
 
