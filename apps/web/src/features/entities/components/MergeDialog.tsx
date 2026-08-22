@@ -84,9 +84,20 @@ export function MergeDialog({ entities, preselected, onClose, onMerged }: MergeD
   const duplicate = entities.find((e) => e.id === duplicateId) ?? null
   const ready = Boolean(primary && duplicate && primaryId !== duplicateId)
 
+  /**
+   * Backdrop dismissal. Before a merge runs it just closes; after a merge has
+   * run it must behave like Done — invalidate the directory cache (the
+   * duplicate row is gone server-side), clear pick mode, and navigate to the
+   * survivor — so the UI never keeps the merged-away entity selected.
+   */
+  const dismiss = (): void => {
+    if (result) onMerged(result.primary.id)
+    else onClose()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-lg" role="dialog" aria-modal="true" aria-label="Merge duplicate entities">
-      <button type="button" aria-label="Close merge dialog" className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <button type="button" aria-label="Close merge dialog" className="absolute inset-0 bg-black/40" onClick={dismiss} />
       <div className="relative max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-lg border border-hairline bg-surface p-xl shadow-xl">
         {!result ? (
           <>

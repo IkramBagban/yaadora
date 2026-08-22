@@ -51,9 +51,17 @@ export function ProfileHeader({ payload, directoryRow }: ProfileHeaderProps) {
         </div>
 
         <div className="w-full max-w-56 shrink-0 rounded-md border border-hairline p-md">
-          <p className="text-micro uppercase text-ink3">mentions · last 12 months</p>
+          {/* Receipts-backed, not total mentions: /entities/:id/context returns
+              only top-facts/edges provenance, so the series undercounts until a
+              per-entity timeseries endpoint exists (see track learnings). */}
+          <p
+            className="text-micro uppercase text-ink3"
+            title="Dossier receipts per month — a lower bound on real mentions until a per-entity timeseries exists"
+          >
+            receipts · last 12 months
+          </p>
           <div className="mt-sm h-9 text-accent">
-            <Sparkline points={trend.counts} label="Mentions per month over the last 12 months" />
+            <Sparkline points={trend.counts} label="Dossier receipts per month over the last 12 months" />
           </div>
         </div>
       </div>

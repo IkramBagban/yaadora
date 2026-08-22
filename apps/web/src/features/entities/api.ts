@@ -150,21 +150,38 @@ export function fetchEntityContext(entityId: string): Promise<EntityContextPaylo
   return request<EntityContextPayload>(`/entities/${encodeURIComponent(entityId)}/context`)
 }
 
+/** Server page cap for GET /facts (see apps/server/src/routes/facts-admin.ts). */
+const FACTS_PAGE_LIMIT = '200'
+/** Runaway guard for cursor following — 25 pages ≈ 5000 facts per entity. */
+const MAX_FACT_PAGES = 25
+
 /**
  * GET /facts?subject=<id>&view=<view> — full fact rows for one entity
- * (subject OR object match), newest first, capped at the server max (200).
+ * (subject OR object match), newest first. Follows the server's keyset
+ * cursor to completion so entities with more than one page of facts don't
+ * silently lose their older rows.
  */
 export async function fetchEntityFacts(
   entityId: string,
   view: 'current' | 'history',
 ): Promise<FactHistoryItem[]> {
-  const params = new URLSearchParams({
+  const base = new URLSearchParams({
     subject: entityId,
     view,
-    limit: '200',
+    limit: FACTS_PAGE_LIMIT,
   })
-  const payload = await request<FactListPayload>(`/facts?${params.toString()}`)
-  return payload.items
+
+  const items: FactHistoryItem[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < MAX_FACT_PAGES; page++) {
+    const params = new URLSearchParams(base)
+    if (cursor) params.set('cursor', cursor)
+    const payload = await request<FactListPayload>(`/facts?${params.toString()}`)
+    items.push(...payload.items)
+    cursor = payload.nextCursor
+    if (!cursor) return items
+  }
+  return items
 }
 
 /** POST /entities/merge — fold duplicate into primary; returns the audit summary. */
