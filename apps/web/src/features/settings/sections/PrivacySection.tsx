@@ -19,21 +19,22 @@ const RETENTION_CHOICES = [
   { value: '365', label: 'Keep 1 year' },
 ] as const
 
-type RetentionValue = (typeof RETENTION_CHOICES)[number]['value']
-
-function isRetentionValue(v: string): v is RetentionValue {
+function isKnownRetention(v: string): boolean {
   return RETENTION_CHOICES.some((c) => c.value === v)
 }
 
-function retentionToChoice(days: number | null): RetentionValue {
-  const raw = days === null ? 'forever' : String(days)
-  return isRetentionValue(raw) ? raw : 'forever'
+/** Map the saved day count to its draft string. Values outside the preset
+ * choices (the server accepts 0–3650) round-trip verbatim so they are shown
+ * as a "custom" option instead of being silently rewritten on save. */
+function retentionToDraft(days: number | null): string {
+  return days === null ? 'forever' : String(days)
 }
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
 interface Draft {
-  retention: RetentionValue
+  /** A RETENTION_CHOICES key, or the raw day count for custom values. */
+  retention: string
   quietStart: string
   quietEnd: string
   budget: string
@@ -42,7 +43,7 @@ interface Draft {
 
 function toDraft(s: PrivacySettings): Draft {
   return {
-    retention: retentionToChoice(s.transcriptRetentionDays),
+    retention: retentionToDraft(s.transcriptRetentionDays),
     quietStart: s.quietHoursStart.slice(0, 5),
     quietEnd: s.quietHoursEnd.slice(0, 5),
     budget: String(s.maxDailySurfacings),
@@ -50,7 +51,20 @@ function toDraft(s: PrivacySettings): Draft {
   }
 }
 
+/** Extra select entry when the saved retention is not one of the presets. */
+function customRetentionOption(days: number | null): { value: string; label: string } | null {
+  if (days === null) return null
+  const raw = String(days)
+  return isKnownRetention(raw) ? null : { value: raw, label: `Keep ${raw} days (current)` }
+}
+
 function validate(d: Draft): string | null {
+  if (d.retention !== 'forever') {
+    const days = Number(d.retention)
+    if (!Number.isInteger(days) || days < 0 || days > 3650) {
+      return 'Transcript retention must be between 0 and 3650 days.'
+    }
+  }
   if (!TIME_RE.test(d.quietStart) || !TIME_RE.test(d.quietEnd)) {
     return 'Quiet hours must be valid HH:MM times.'
   }
@@ -80,6 +94,12 @@ export function PrivacySection() {
     [saved, draft],
   )
 
+  /** Extra select entry while the current retention isn't one of the presets. */
+  const customRetention = useMemo(() => {
+    if (!draft) return null
+    return customRetentionOption(draft.retention === 'forever' ? null : Number(draft.retention))
+  }, [draft])
+
   // Dirty-state guard: confirm before leaving with unsaved edits (S-1).
   useBlocker({
     shouldBlockFn: () => {
@@ -108,15 +128,30 @@ export function PrivacySection() {
     setFeedback(null)
   }
 
+/** Build a diff-only PATCH against the last saved state — fields the user
+ * didn't touch are never sent, so saving can't silently rewrite values that
+ * the draft normalizes (e.g. custom retention day counts). */
+function toPatch(d: Draft, s: PrivacySettings): PrivacyPatch {
+  const patch: PrivacyPatch = {}
+  const retention = d.retention === 'forever' ? null : Number(d.retention)
+  if (retention !== s.transcriptRetentionDays) {
+    patch.transcriptRetentionDays = retention
+  }
+  if (d.quietStart !== s.quietHoursStart.slice(0, 5)) patch.quietHoursStart = d.quietStart
+  if (d.quietEnd !== s.quietHoursEnd.slice(0, 5)) patch.quietHoursEnd = d.quietEnd
+  if (Number(d.budget) !== s.maxDailySurfacings) {
+    patch.maxDailySurfacings = Number(d.budget)
+  }
+  if (d.insightsEnabled !== s.insightsEnabled) patch.insightsEnabled = d.insightsEnabled
+  return patch
+}
+
   function handleSave(): void {
-    if (!draft || validationError) return
-    const patch: PrivacyPatch = {
-      transcriptRetentionDays: draft.retention === 'forever' ? null : Number(draft.retention),
-      quietHoursStart: draft.quietStart,
-      quietHoursEnd: draft.quietEnd,
-      maxDailySurfacings: Number(draft.budget),
-      insightsEnabled: draft.insightsEnabled,
-    }
+    if (!draft || !saved || validationError) return
+    const patch = toPatch(draft, saved)
+    // The Save button is disabled unless dirty, so the diff is non-empty —
+    // but never send an empty body (the server rejects it).
+    if (Object.keys(patch).length === 0) return
     update.mutate(patch, {
       onSuccess: () =>
         setFeedback({ kind: 'success', message: 'Privacy settings saved.' }),
@@ -141,16 +176,15 @@ export function PrivacySection() {
 
       {draft ? (
         <div className="flex flex-col gap-lg">
-          <Field label="Transcript retention" htmlFor="retention">
+          <Field
+            label="Transcript retention"
+            htmlFor="retention"
+            hint={customRetention ? `Server is set to keep ${customRetention.value} days.` : undefined}
+          >
             <select
               id="retention"
               value={draft.retention}
-              onChange={(e) => {
-                const next = e.target.value
-                if (isRetentionValue(next)) {
-                  edit({ retention: next })
-                }
-              }}
+              onChange={(e) => edit({ retention: e.target.value })}
               className="h-10 rounded-md border border-hairline bg-surface px-md text-body text-ink focus:border-accent focus:outline-none"
             >
               {RETENTION_CHOICES.map((c) => (
@@ -158,6 +192,11 @@ export function PrivacySection() {
                   {c.label}
                 </option>
               ))}
+              {customRetention ? (
+                <option key={customRetention.value} value={customRetention.value}>
+                  {customRetention.label}
+                </option>
+              ) : null}
             </select>
           </Field>
 
