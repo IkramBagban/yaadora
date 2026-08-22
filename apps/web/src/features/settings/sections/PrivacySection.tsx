@@ -67,13 +67,13 @@ function validate(d: Draft): string | null {
 export function PrivacySection() {
   const query = usePrivacySettings()
   const update = useUpdatePrivacySettings()
-  const [draft, setDraft] = useState<Draft | null>(null)
+  /** User edits; null until something is changed — the form derives from the
+   * saved server state, so no effect-based initialization is needed. */
+  const [edits, setEdits] = useState<Draft | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   const saved = query.data
-  useEffect(() => {
-    if (saved && !draft) setDraft(toDraft(saved))
-  }, [saved, draft])
+  const draft: Draft | null = edits ?? (saved ? toDraft(saved) : null)
 
   const dirty = useMemo(
     () => Boolean(saved && draft && JSON.stringify(toDraft(saved)) !== JSON.stringify(draft)),
@@ -99,7 +99,7 @@ export function PrivacySection() {
   /** Merge a partial edit into the draft and clear stale save feedback. */
   function edit(partial: Partial<Draft>): void {
     if (!draft) return
-    setDraft({ ...draft, ...partial })
+    setEdits({ ...draft, ...partial })
     setFeedback(null)
   }
 
@@ -220,7 +220,7 @@ export function PrivacySection() {
               Save changes
             </Button>
             {saved ? (
-              <Button variant="ghost" disabled={!dirty || update.isPending} onClick={() => setDraft(toDraft(saved))}>
+              <Button variant="ghost" disabled={!dirty || update.isPending} onClick={() => setEdits(null)}>
                 Discard
               </Button>
             ) : null}
