@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   db,
   entities,
+  memories,
   eq,
   and,
   listOpenLoops,
@@ -19,7 +20,7 @@ const log = createLogger("server:open-loops");
  *
  * GET   /open-loops?status=&kind=&entityId=&limit=
  * POST  /open-loops  { title, kind, entityId?, dueAt? } — manual planting
- * PATCH /open-loops/:id  { status?, dueAt?, title? }
+ * PATCH /open-loops/:id  { status?, dueAt?, title?, resolvedBy? }
  *
  * Manual loops have sourceMemory = null (see schema/open-loops.ts) — no
  * synthetic memory row is written to the immutable log.
@@ -83,6 +84,16 @@ async function entityOwned(userId: string, entityId: string): Promise<boolean> {
   return Boolean(row);
 }
 
+/** Verify an optional evidence-memory reference is owned by this user. */
+async function memoryOwned(userId: string, memoryId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: memories.id })
+    .from(memories)
+    .where(and(eq(memories.id, memoryId), eq(memories.userId, userId)))
+    .limit(1);
+  return Boolean(row);
+}
+
 /** POST /open-loops — manual planting; provenance is the user's action. */
 export async function createOpenLoopRoute(req: Request): Promise<Response> {
   const userId = await authenticate(req);
@@ -126,10 +137,19 @@ const PatchBody = z
     // ISO datetime or null to clear.
     dueAt: z.string().datetime({ offset: true }).nullable().optional(),
     title: z.string().trim().min(1).max(500).optional(),
+    // Evidence resolve ("this memory closes it"); null to clear. Must be one
+    // of the caller's own memories (checked below). Invariant: a status move
+    // away from 'resolved' clears resolvedBy unless an explicit value rides
+    // along in the same PATCH.
+    resolvedBy: z.string().uuid().nullable().optional(),
   })
   .refine(
-    (d) => d.status !== undefined || d.dueAt !== undefined || d.title !== undefined,
-    { message: "At least one of status, dueAt, or title is required." },
+    (d) =>
+      d.status !== undefined ||
+      d.dueAt !== undefined ||
+      d.title !== undefined ||
+      d.resolvedBy !== undefined,
+    { message: "At least one of status, dueAt, title, or resolvedBy is required." },
   );
 
 /** PATCH /open-loops/:id — lifecycle + metadata edits. */
@@ -154,7 +174,11 @@ export async function patchOpenLoopRoute(
   if (!parsed.success) {
     return badRequest(parsed.error.issues.map((i) => i.message).join("; "));
   }
-  const { status, dueAt, title } = parsed.data;
+  const { status, dueAt, title, resolvedBy } = parsed.data;
+
+  if (resolvedBy && !(await memoryOwned(userId, resolvedBy))) {
+    return badRequest("resolvedBy does not reference one of your memories.");
+  }
 
   try {
     const updated = await patchOpenLoop(userId, loopId, {
@@ -162,6 +186,7 @@ export async function patchOpenLoopRoute(
       title,
       dueAt:
         dueAt === undefined ? undefined : dueAt === null ? null : new Date(dueAt),
+      resolvedBy,
     });
     if (!updated) return notFound("Open loop not found.");
     log.info("open loop patched", { userId, loopId: updated.id });
