@@ -25,7 +25,7 @@ const log = createLogger("server:rules");
  * Superseded historical rows are not listed and cannot be reactivated or edited.
  */
 
-function serializeRule(row: {
+export function serializeRule(row: {
   id: string;
   ruleText: string;
   triggerText: string;
