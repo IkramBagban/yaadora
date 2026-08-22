@@ -1786,10 +1786,15 @@ export interface GraphSnapshotEntity {
   lastSeen: string | null;
 }
 export interface GraphSnapshotEdge {
+  aId: string;
+  bId: string;
   aName: string;
   bName: string;
   relType: string;
   status: string;
+  strength: number;
+  lastMentioned: string | null;
+  evidence: string[];
 }
 export interface GraphSnapshotLoop {
   kind: string;
@@ -1810,13 +1815,15 @@ export interface GraphSnapshot {
 }
 
 /**
- * A whole-graph snapshot for the nightly pattern pass (spec 02 §3.2.3): the
- * user's entities, materialized edges, open loops, and dated memories over a
- * window. Personal-scale data fits one reasoning-model context, so the model —
- * not a graph algorithm (spec 01 D1) — does the connecting. `memoryWindowDays`
- * bounds how far back dated memories reach so "projects went quiet at week
- * three" style patterns have their timeline; entities/edges/loops are the full
- * current graph.
+ * A whole-graph snapshot for the nightly pattern pass (spec 02 §3.2.3) and the
+ * web graph page (GET /graph/snapshot): the user's entities, materialized
+ * edges, open loops, and dated memories over a window. Personal-scale data
+ * fits one reasoning-model context, so the model — not a graph algorithm
+ * (spec 01 D1) — does the connecting. `memoryWindowDays` bounds how far back
+ * dated memories reach so "projects went quiet at week three" style patterns
+ * have their timeline; entities/edges/loops are the full current graph.
+ * Edges carry endpoint ids + strength/lastMentioned/evidence so web clients
+ * can lay out and filter the graph; the pattern pass only reads the names.
  */
 export async function getGraphSnapshot(params: {
   userId: string;
@@ -1832,8 +1839,9 @@ export async function getGraphSnapshot(params: {
       ORDER BY mention_count DESC LIMIT 400
     `),
     db.execute(sql`
-      SELECT ea.canonical_name AS a_name, eb.canonical_name AS b_name,
-             e.rel_type, e.status
+      SELECT e.a_id, e.b_id,
+             ea.canonical_name AS a_name, eb.canonical_name AS b_name,
+             e.rel_type, e.status, e.strength, e.last_mentioned, e.evidence
       FROM entity_edges e
       JOIN entities ea ON ea.id = e.a_id
       JOIN entities eb ON eb.id = e.b_id
@@ -1866,10 +1874,17 @@ export async function getGraphSnapshot(params: {
       lastSeen: r.last_seen ? new Date(r.last_seen as string).toISOString() : null,
     })),
     edges: asRows(edgeRows).map((r) => ({
+      aId: String(r.a_id),
+      bId: String(r.b_id),
       aName: String(r.a_name),
       bName: String(r.b_name),
       relType: String(r.rel_type),
       status: String(r.status),
+      strength: Number(r.strength ?? 0),
+      lastMentioned: r.last_mentioned
+        ? new Date(r.last_mentioned as string).toISOString()
+        : null,
+      evidence: (r.evidence as string[] | null) ?? [],
     })),
     loops: asRows(loopRows).map((r) => ({
       kind: String(r.kind),

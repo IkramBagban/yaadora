@@ -107,6 +107,61 @@
   color-scheme: dark;
 }
 
+/*
+ * Knowledge-graph categorical palette (graph page). One hue per entity
+ * type, echoing the base token hues so nodes feel native in both themes.
+ * --g-on is the avatar-ink that stays legible on every --g-* fill.
+ */
+:root {
+  --g-person: #a85a4e;
+  --g-place: #5f7f6b;
+  --g-org: #a07c3f;
+  --g-topic: #9c5227;
+  --g-project: #55688c;
+  --g-event: #8a5f9e;
+  --g-other: #6e675f;
+  --g-on: #fdfbf8;
+}
+
+.dark {
+  --g-person: #d98a80;
+  --g-place: #7fb08f;
+  --g-org: #c9a265;
+  --g-topic: #e29a63;
+  --g-project: #8fa5c9;
+  --g-event: #b395c9;
+  --g-other: #9e978c;
+  --g-on: #141210;
+}
+
+/* xyflow chrome re-skinned to ink & paper (both themes ride the vars). */
+.react-flow__controls {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--c-hairline);
+}
+.react-flow__controls button {
+  background: var(--c-surface);
+  color: var(--c-ink2);
+  border-bottom: 1px solid var(--c-hairline);
+}
+.react-flow__controls button:hover {
+  background: var(--c-surface-alt);
+}
+.react-flow__controls button svg {
+  fill: currentColor;
+}
+.react-flow__minimap {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--c-hairline);
+  background: var(--c-surface);
+}
+.react-flow__minimap-mask {
+  fill: var(--c-bg);
+  opacity: 0.65;
+}
+
 /* Ask-page toast entry (components/ask/Toasts.tsx). */
 @keyframes toast-in {
   from {
