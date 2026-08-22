@@ -133,3 +133,31 @@
   --g-other: #9e978c;
   --g-on: #141210;
 }
+
+/* xyflow chrome re-skinned to ink & paper (both themes ride the vars). */
+.react-flow__controls {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--c-hairline);
+}
+.react-flow__controls button {
+  background: var(--c-surface);
+  color: var(--c-ink2);
+  border-bottom: 1px solid var(--c-hairline);
+}
+.react-flow__controls button:hover {
+  background: var(--c-surface-alt);
+}
+.react-flow__controls button svg {
+  fill: currentColor;
+}
+.react-flow__minimap {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--c-hairline);
+  background: var(--c-surface);
+}
+.react-flow__minimap-mask {
+  fill: var(--c-bg);
+  opacity: 0.65;
+}

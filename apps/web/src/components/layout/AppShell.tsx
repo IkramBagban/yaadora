@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet } from '@tanstack/react-router'
+import { Outlet, useMatches } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
@@ -7,6 +7,8 @@ import { CommandPalette } from '../../features/palette'
 
 export function AppShell() {
   const [navOpen, setNavOpen] = useState(false)
+  // Full-bleed routes (interactive canvases) opt out of the reading column.
+  const fullBleed = useMatches().some((m) => m.routeId === '/graph')
 
   return (
     <div className="min-h-screen bg-bg text-ink">
@@ -39,7 +41,13 @@ export function AppShell() {
 
       <div className="flex min-h-screen flex-col md:pl-60">
         <Topbar onMenuClick={() => setNavOpen(true)} />
-        <main className="mx-auto w-full max-w-5xl flex-1 px-lg py-xl md:px-xxl md:py-xxl">
+        <main
+          className={
+            fullBleed
+              ? 'flex w-full flex-1 flex-col'
+              : 'mx-auto w-full max-w-5xl flex-1 px-lg py-xl md:px-xxl md:py-xxl'
+          }
+        >
           <Outlet />
         </main>
       </div>
