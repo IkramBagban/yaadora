@@ -134,6 +134,12 @@ export function RemindersPage() {
         )}
       </div>
 
+      {inventory.isError && (
+        <p className="text-caption text-danger">
+          Calendar data unavailable: {inventory.error.message}
+        </p>
+      )}
+
       <div className="grid items-start gap-xl lg:grid-cols-[290px_1fr]">
         <MonthCalendar
           reminders={inventory.data?.items ?? []}

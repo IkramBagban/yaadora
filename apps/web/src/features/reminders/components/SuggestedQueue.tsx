@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
@@ -11,25 +11,51 @@ import { ErrorNote, SectionHeader } from './Feedback';
 /**
  * Queue of AI-proposed reminders awaiting review (status = 'suggested').
  * Bulk confirm promotes rows to pending; bulk dismiss soft-deletes them.
- * Renders nothing while loading or when the queue is empty.
+ * Renders nothing while loading or when the queue is empty; load failures
+ * surface inline with a retry instead of silently hiding the card.
  */
 export function SuggestedQueue() {
   const query = useRemindersList('suggested');
   const confirm = useConfirmSuggestion();
   const dismiss = useDismissReminder();
 
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [rawSelection, setRawSelection] = useState<ReadonlySet<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  // Local flag for bulk runs: react-query's isPending tracks only the latest
+  // mutateAsync call, so concurrent batches would re-enable controls mid-flight.
+  const [bulkBusy, setBulkBusy] = useState(false);
 
-  const items = query.data?.items ?? [];
-  const busy = confirm.isPending || dismiss.isPending;
+  const items = useMemo(() => query.data?.items ?? [], [query.data]);
+  const liveIds = useMemo(() => new Set(items.map((r) => r.id)), [items]);
+  // Effective selection = raw picks ∩ current rows, derived during render so
+  // "select all" can never drift after a refetch removes or adds rows.
+  const selected = useMemo(
+    () => new Set([...rawSelection].filter((id) => liveIds.has(id))),
+    [rawSelection, liveIds],
+  );
 
-  if (query.isLoading || items.length === 0) return null;
+  if (query.isPending) return null;
+  if (query.isError) {
+    return (
+      <Card>
+        <div className="flex flex-col items-start gap-md">
+          <p className="text-caption text-danger">
+            Couldn't load AI suggestions: {query.error.message}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => void query.refetch()}>
+            Try again
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+  if (items.length === 0) return null;
 
-  const allSelected = selected.size === items.length;
+  const busy = bulkBusy || confirm.isPending || dismiss.isPending;
+  const allSelected = items.length > 0 && items.every((r) => selected.has(r.id));
 
   const toggle = (id: string): void => {
-    setSelected((prev) => {
+    setRawSelection((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -38,17 +64,22 @@ export function SuggestedQueue() {
   };
 
   const toggleAll = (): void =>
-    setSelected(allSelected ? new Set() : new Set(items.map((r) => r.id)));
+    setRawSelection(allSelected ? new Set() : new Set(items.map((r) => r.id)));
 
   async function runAll(action: (id: string) => Promise<unknown>): Promise<void> {
     setActionError(null);
-    const results = await Promise.allSettled([...selected].map((id) => action(id)));
-    setSelected(new Set());
-    const failure = results.find((r) => r.status === 'rejected');
-    if (failure && failure.status === 'rejected') {
-      setActionError(
-        failure.reason instanceof Error ? failure.reason.message : 'Something went wrong.',
-      );
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled([...selected].map((id) => action(id)));
+      setRawSelection(new Set());
+      const failure = results.find((r) => r.status === 'rejected');
+      if (failure && failure.status === 'rejected') {
+        setActionError(
+          failure.reason instanceof Error ? failure.reason.message : 'Something went wrong.',
+        );
+      }
+    } finally {
+      setBulkBusy(false);
     }
   }
 

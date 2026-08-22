@@ -53,11 +53,17 @@ export function confirmSuggested(id: string): Promise<Reminder> {
 
 /** PATCH /reminders/:id — edit text/schedule/status. */
 export function updateReminder(id: string, patch: Partial<ReminderWrite>): Promise<Reminder> {
+  const { recurrence } = patch;
+  // Server rejects weekdays unless the resulting recurrence is 'weekly', but a
+  // weekday-only patch (no recurrence change) is valid for existing weekly rows.
+  const allowWeekdays = recurrence === 'weekly' || recurrence === undefined;
   return request<Reminder>(`/reminders/${id}`, {
     method: 'PATCH',
     body: JSON.stringify({
       ...patch,
-      ...(patch.recurrence === 'weekly' ? { weekdays: patch.weekdays ?? [] } : {}),
+      // `undefined` keys vanish in JSON.stringify: weekday-only edits pass
+      // through; explicit switches to daily/never never carry stale weekdays.
+      weekdays: allowWeekdays ? patch.weekdays : undefined,
     }),
   });
 }
