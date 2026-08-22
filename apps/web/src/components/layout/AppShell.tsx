@@ -3,12 +3,14 @@ import { Outlet } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { CommandPalette } from '../../features/palette'
 
 export function AppShell() {
   const [navOpen, setNavOpen] = useState(false)
 
   return (
     <div className="min-h-screen bg-bg text-ink">
+      <CommandPalette />
       <aside className="fixed inset-y-0 left-0 z-30 hidden md:block">
         <Sidebar />
       </aside>
