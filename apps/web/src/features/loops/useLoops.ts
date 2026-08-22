@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createLoop, createReminderFromLoop, fetchLoops, patchLoop } from './api'
-import type { CreateLoopInput, Loop, LoopStatus, PatchLoopInput } from './types'
+import type { CreateLoopInput, Loop, PatchLoopInput } from './types'
 
 export const loopKeys = {
   all: ['loops'] as const,
@@ -87,14 +87,25 @@ export interface ConvertResult {
  * Convert-to-reminder: creates the one-shot reminder from the loop's title /
  * due date / provenance, then moves the loop out of the open column
  * (`status: 'resolved'` — the closest terminal state the schema offers; see
- * track learnings).
+ * track learnings). An explicit `dueAt` (from the convert dialog) overrides
+ * the loop's own.
  */
 export function useConvertToReminder() {
   const invalidate = useInvalidateLoops()
   return useMutation({
-    mutationFn: async (loop: Loop): Promise<ConvertResult> => {
-      const reminder = await createReminderFromLoop(loop)
-      await patchLoop(loop.id, { status: 'resolved' satisfies LoopStatus })
+    mutationFn: async ({
+      loop,
+      dueAt,
+    }: {
+      loop: Loop
+      dueAt?: string | null
+    }): Promise<ConvertResult> => {
+      const reminder = await createReminderFromLoop({
+        title: loop.title,
+        dueAt: dueAt !== undefined ? dueAt : loop.dueAt,
+        sourceMemory: loop.sourceMemory,
+      })
+      await patchLoop(loop.id, { status: 'resolved' })
       return { reminderId: reminder.id }
     },
     onSuccess: () => invalidate(),
