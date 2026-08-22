@@ -278,6 +278,44 @@ export interface ReminderSuggestion {
   sourceMemoryId?: string;
 }
 
+// --- durable conversations (spec 02 §2.1, §8) --------------------------------
+
+/** GET · POST /conversations — one serialized conversation row. */
+export interface ConversationSummary {
+  id: string;
+  startedAt: string;
+  lastTurnAt: string;
+  status: string;
+  summary: string | null;
+  turnCount: number;
+}
+
+/** GET /conversations */
+export interface ConversationList {
+  conversations: ConversationSummary[];
+}
+
+/** POST /transcribe */
+export interface TranscribeResponse {
+  text: string;
+  model: string | null;
+  language: string | null;
+  empty: boolean;
+}
+
+/** POST /surfacings/:id/reaction */
+export interface SurfacingReactionResponse {
+  id: string;
+  reaction: 'engaged' | 'dismissed';
+  reactionAt: string | null;
+}
+
+/** GET /surfacings/:id/evidence */
+export interface SurfacingEvidence {
+  id: string;
+  memories: SurfacingEvidenceMemory[];
+}
+
 // --- entity pages / graph doorway (spec 02 §8, P3) -------------------------
 
 /** A current fact about an entity, with provenance for a tappable receipt. */
