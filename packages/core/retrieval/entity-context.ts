@@ -31,8 +31,8 @@ export interface EntityContextLoop {
   kind: string;
   title: string;
   dueAt: string | null;
-  /** provenance memory id */
-  sourceMemory: string;
+  /** provenance memory id — null for manually planted loops */
+  sourceMemory: string | null;
 }
 
 export interface EntityContextFact {
@@ -111,7 +111,9 @@ export async function assembleEntityContext(
 
   const receipts = Array.from(
     new Set<string>([
-      ...openLoops.map((l) => l.sourceMemory),
+      ...openLoops
+        .map((l) => l.sourceMemory)
+        .filter((m): m is string => m != null),
       ...factItems.map((f) => f.sourceMemory),
       ...edgeItems.flatMap((e) => e.evidence),
     ]),
@@ -149,7 +151,8 @@ export function renderEntityContext(ctx: EntityContext): string {
     lines.push("Open threads:");
     for (const l of ctx.openLoops) {
       const due = l.dueAt ? ` (due ${fmtDate(l.dueAt)})` : "";
-      lines.push(`  • [${l.kind}] ${l.title}${due} [${l.sourceMemory}]`);
+      const ref = l.sourceMemory ? ` [${l.sourceMemory}]` : " [planted manually]";
+      lines.push(`  • [${l.kind}] ${l.title}${due}${ref}`);
     }
   }
 
