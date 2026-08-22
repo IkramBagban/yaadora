@@ -48,7 +48,11 @@ async function collectPages<T>(
     if (!res.nextCursor || res.items.length === 0) return all;
     cursor = res.nextCursor;
   }
-  return all;
+  // A cursor that survives MAX_PAGES pages means the listing is not
+  // terminating — abort rather than export a silently incomplete dataset.
+  throw new Error(
+    `${label}: pagination did not terminate after ${MAX_PAGES} pages. Export aborted so you don't get partial data.`,
+  );
 }
 
 function collectMemories(onProgress: ExportProgress): Promise<Memory[]> {

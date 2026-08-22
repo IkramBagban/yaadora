@@ -8,7 +8,9 @@ export function downloadTextFile(filename: string, mime: string, content: string
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
-  URL.revokeObjectURL(url)
+  // Revoking synchronously can cancel the download before the browser starts
+  // it (Safari/Firefox) — defer to the next tick instead.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /** `yaadora-export-2026-08-22` style stem for export filenames. */

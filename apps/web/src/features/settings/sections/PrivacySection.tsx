@@ -89,7 +89,12 @@ export function PrivacySection() {
   })
   useEffect(() => {
     if (!dirty) return
-    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    // Both signals: Chrome/Edge honor preventDefault, Safari/Firefox need
+    // returnValue to reliably show the "leave site?" prompt.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [dirty])

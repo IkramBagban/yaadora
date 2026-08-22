@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import { Button } from '../../../components/ui/Button'
-import { ApiError } from '../../../api/client'
 import {
   SegmentedControl,
   SettingsSection,
@@ -45,8 +44,11 @@ export function ExportSection() {
         )
       }
     } catch (err) {
+      // Surface abort reasons (e.g. non-terminating pagination) verbatim.
       setError(
-        err instanceof ApiError ? err.message : 'Export failed. Please try again.',
+        err instanceof Error && err.message
+          ? err.message
+          : 'Export failed. Please try again.',
       )
     } finally {
       setRunning(false)
