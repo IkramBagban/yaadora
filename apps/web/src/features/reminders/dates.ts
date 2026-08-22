@@ -60,8 +60,8 @@ export function dueLabel(iso: string, now = new Date()): string {
 // <input type="datetime-local"> conversions
 // ---------------------------------------------------------------------------
 
-/** ISO wire value → local "YYYY-MM-DDTHH:mm" for an editable input. */
-export function toDatetimeLocalValue(iso: string): string {
+/** ISO wire value (or Date) → local "YYYY-MM-DDTHH:mm" for an editable input. */
+export function toDatetimeLocalValue(iso: string | Date): string {
   const d = new Date(iso);
   const pad = (n: number): string => String(n).padStart(2, '0');
   return (
