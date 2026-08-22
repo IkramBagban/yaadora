@@ -101,6 +101,40 @@ export interface Fact {
   createdAt: string;
 }
 
+/** GET /facts — admin listing row (routes/facts-admin.ts serialize()). */
+export interface AdminFact {
+  id: string;
+  subjectId: string | null;
+  subjectName: string | null;
+  objectId: string | null;
+  objectName: string | null;
+  predicate: string | null;
+  objectText: string | null;
+  factText: string;
+  confidence: number;
+  factType: string;
+  origin: string;
+  validFrom: string | null;
+  validTo: string | null;
+  /** newer fact that replaced this one; null on current heads */
+  supersededBy: string | null;
+  /** cross-flagged incompatible fact (conflicts inbox pairing) */
+  conflictsWith: string | null;
+  conflicted: boolean;
+  hidden: boolean;
+  conflictNote: string | null;
+  sourceMemory: string;
+  createdAt: string;
+}
+
+export type FactView = 'current' | 'history';
+
+/** GET /facts */
+export interface FactPage {
+  items: AdminFact[];
+  nextCursor: string | null;
+}
+
 export interface Entity {
   id: string;
   type: string;
