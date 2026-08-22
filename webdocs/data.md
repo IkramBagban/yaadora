@@ -73,6 +73,7 @@ Do not relitigate these. New decisions get appended at the bottom with a date; e
 - 2026-08-22 · Deploy: Vercel free static hosting, Root Directory `apps/web`, `vercel.json` SPA rewrite.
 - 2026-08-22 · Stack: Vite React TS SPA, TanStack Router + Query, Tailwind with mobile tokens, `@xyflow/react` graph, Recharts charts.
 - 2026-08-22 · Backend stays Bun.serve; new endpoints are thin wrappers over `@repo/db`.
+- 2026-08-22 · Execution refinement (supersedes the SMALL-tasks wording above): issues are mid-sized and FEATURE-scoped — roughly one page/experience per frontend issue and five batched endpoint issues on the backend. Conflict safety comes from each issue owning disjoint file paths, not from micro-slicing.
 
 ## CODING STANDARDS (mandatory)
 
