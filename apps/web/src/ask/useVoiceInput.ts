@@ -82,8 +82,12 @@ export function useVoiceInput({ onTranscript, onError }: VoiceInputOptions) {
         }
         const data = (await res.json()) as TranscribeResponse
         if (data.text) onTranscript(data.text)
-      } catch {
-        onError('Voice input failed. Try again or type instead.')
+      } catch (err) {
+        onError(
+          err instanceof ApiError && err.message
+            ? err.message
+            : 'Voice input failed. Try again or type instead.',
+        )
       } finally {
         setState('idle')
       }

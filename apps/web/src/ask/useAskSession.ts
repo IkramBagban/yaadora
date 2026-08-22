@@ -189,6 +189,20 @@ export function useAskSession(options: AskSessionOptions = {}) {
       let sawToken = false
       let settled = false
 
+      // Replacing the controller supersedes any exchange still streaming
+      // under the old one — its run() bails on the aborted signal without
+      // settling. Settle those here (partial text keeps what arrived,
+      // otherwise the turn reads as stopped), or a retry / quick reply fired
+      // mid-stream leaves a phantom 'streaming' exchange and the composer
+      // stuck on Stop.
+      setExchanges((list) =>
+        list.map((e) =>
+          e.id !== exchangeId && e.status === 'streaming'
+            ? { ...e, status: e.text ? 'done' : 'stopped', interrupted: Boolean(e.text) }
+            : e,
+        ),
+      )
+
       try {
         const conversationId = await ensureConversation()
         if (controller.signal.aborted) return
