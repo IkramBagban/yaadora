@@ -37,6 +37,7 @@ const memoryCols = {
   createdAt: memories.createdAt,
   source: memories.source,
   status: memories.status,
+  pinned: memories.pinned,
 };
 
 const factCols = {

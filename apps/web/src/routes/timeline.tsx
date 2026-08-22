@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { PlaceholderPage } from '../components/layout/PlaceholderPage'
+import { TimelinePage } from '../components/timeline/TimelinePage'
 
 export const Route = createFileRoute('/timeline')({
-  component: () => <PlaceholderPage title="Timeline" track="timeline" />,
+  component: TimelinePage,
 })
