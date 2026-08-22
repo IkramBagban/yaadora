@@ -91,6 +91,9 @@ async function collectSingleShotLists(onProgress: ExportProgress): Promise<
   const [entities, openLoops, reminders, rules, digests] = await Promise.all([
     request<ListEnvelope<EntityListItem>>('/entities'),
     request<ListEnvelope<ExportOpenLoop>>('/open-loops?limit=500'),
+    // NOTE: scope=all is pending + suggested only — the server exposes no
+    // scope for completed/dismissed reminders, so those are absent from
+    // exports until a backend scope exists.
     request<ReminderList>('/reminders?scope=all&limit=100'),
     request<{ rules: StandingRule[] }>('/rules'),
     request<{ digests: ExportDigest[] }>('/digests'),

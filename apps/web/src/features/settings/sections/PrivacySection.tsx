@@ -72,7 +72,7 @@ function validate(d: Draft): string | null {
     return 'Quiet hours start and end cannot be identical.'
   }
   const budget = Number(d.budget)
-  if (!Number.isInteger(budget) || budget < 0 || budget > 50) {
+  if (d.budget.trim() === '' || !Number.isInteger(budget) || budget < 0 || budget > 50) {
     return 'Daily surfacing budget must be a whole number between 0 and 50.'
   }
   return null

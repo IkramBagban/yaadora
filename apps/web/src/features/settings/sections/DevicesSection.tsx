@@ -123,7 +123,9 @@ export function DevicesSection() {
           kind="error"
           message={
             isMissingEndpoint(remove.error)
-              ? 'Removing devices isn\'t supported by the server yet.'
+              // 404 is ambiguous: no delete route yet, or the token is already
+              // gone. Phrase it so it stays accurate after the endpoint ships.
+              ? 'Remove failed — this device may already be unregistered, or device management isn\'t available on the server yet.'
               : 'Could not remove the device.'
           }
         />
