@@ -328,3 +328,61 @@ export interface MemorySearchResponse {
   memories: MemorySearchItem[];
   facts: FactSearchItem[];
 }
+
+// --- overview dashboard (spec 03 §8: web-facing aggregates) -----------------
+
+/** GET /stats/overview */
+export interface StatsOverview {
+  memories: { total: number; byStatus: Record<string, number> };
+  facts: { currentCount: number; supersededCount: number; conflictedCount: number };
+  entities: { total: number; byType: Record<string, number> };
+  openLoops: { total: number; byStatus: Record<string, number> };
+  rules: { active: number };
+  reminders: { pending: number; suggested: number };
+}
+
+export type StatsBucket = 'day' | 'week' | 'month';
+
+/** One timeseries bucket; `bucketStart` is the ISO (UTC) bucket start. */
+export interface TimeseriesPoint {
+  bucketStart: string;
+  total: number;
+  bySource: Record<string, number>;
+}
+
+/** GET /stats/timeseries */
+export interface TimeseriesResponse {
+  days: number;
+  bucket: StatsBucket;
+  points: TimeseriesPoint[];
+}
+
+/** GET /digests — rebuildable summaries written nightly by consolidation. */
+export interface DigestEntry {
+  kind: string; // 'profile' | 'week'
+  content: string;
+  updatedAt: string;
+}
+
+export interface DigestList {
+  digests: DigestEntry[];
+}
+
+/** GET /open-loops — server-serialized AdminOpenLoop (dates as ISO strings). */
+export interface OpenLoopItem {
+  id: string;
+  kind: string;
+  title: string;
+  entityId: string | null;
+  entityName: string | null;
+  dueAt: string | null;
+  status: string;
+  resolvedBy: string | null;
+  sourceMemory: string | null;
+  createdAt: string;
+  lastSurfacedAt: string | null;
+}
+
+export interface OpenLoopList {
+  items: OpenLoopItem[];
+}
