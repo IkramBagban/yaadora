@@ -13,9 +13,21 @@ export interface FilterRailProps {
   maxStrength: number;
   minStrength: number;
   onMinStrengthChange: (value: number) => void;
+  withinMonths: number | null;
+  onWithinMonthsChange: (months: number | null) => void;
+  hideIsolated: boolean;
+  onHideIsolatedChange: (hide: boolean) => void;
   entities: readonly GraphSnapshotEntity[];
   onJump: (id: string) => void;
 }
+
+const TIME_WINDOWS: Array<{ label: string; months: number | null }> = [
+  { label: 'All', months: null },
+  { label: '1m', months: 1 },
+  { label: '3m', months: 3 },
+  { label: '6m', months: 6 },
+  { label: '12m', months: 12 },
+];
 
 export function FilterRail({
   types,
@@ -26,6 +38,10 @@ export function FilterRail({
   maxStrength,
   minStrength,
   onMinStrengthChange,
+  withinMonths,
+  onWithinMonthsChange,
+  hideIsolated,
+  onHideIsolatedChange,
   entities,
   onJump,
 }: FilterRailProps) {
@@ -149,6 +165,40 @@ export function FilterRail({
         />
         {maxStrength <= 0 && <p className="text-micro text-ink3">No relation data</p>}
       </div>
+
+      <div>
+        <h3 className="mb-sm text-sub font-semibold">Last mentioned</h3>
+        <div className="flex flex-wrap gap-xs">
+          {TIME_WINDOWS.map(({ label, months }) => {
+            const active = withinMonths === months;
+            return (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onWithinMonthsChange(months)}
+                className={`rounded-pill px-sm py-1 text-caption transition-colors ${
+                  active
+                    ? 'bg-accent text-on-accent'
+                    : 'border border-hairline text-ink2 hover:bg-surface-alt'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <label className="flex cursor-pointer items-center gap-sm text-caption text-ink2">
+        <input
+          type="checkbox"
+          checked={hideIsolated}
+          onChange={(e) => onHideIsolatedChange(e.target.checked)}
+          className="h-3.5 w-3.5 accent-(--c-accent)"
+        />
+        Hide isolated nodes
+      </label>
     </div>
   );
 }

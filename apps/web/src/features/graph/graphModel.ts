@@ -52,6 +52,18 @@ export function edgeWidth(strength: number, metrics: GraphMetrics): number {
 export interface GraphFilters {
   enabledTypes: ReadonlySet<string>;
   minStrength: number;
+  /** Keep only edges mentioned within the last N months; null = all time. */
+  withinMonths: number | null;
+  /** Drop nodes with no visible edge (the focused node always stays). */
+  hideIsolated: boolean;
+}
+
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+function withinTimeWindow(lastMentioned: string | null, withinMonths: number | null): boolean {
+  if (withinMonths === null) return true;
+  if (!lastMentioned) return false;
+  return new Date(lastMentioned).getTime() >= Date.now() - withinMonths * MONTH_MS;
 }
 
 export type EntityNodeData = {
@@ -77,8 +89,10 @@ export interface VisibleGraph {
 
 /**
  * Pure derivation from snapshot + precomputed layout to the xyflow arrays:
- * entity-type toggles hide nodes (and their edges), the strength floor hides
- * edges only, and a focus id swaps in the 1-hop neighborhood subgraph.
+ * entity-type toggles hide nodes (and their edges); the strength floor and
+ * last-mentioned time window hide edges only; hideIsolated then drops
+ * degree-0 nodes (the focus anchor always stays); a focus id swaps in the
+ * 1-hop neighborhood subgraph.
  */
 export function buildVisibleGraph(
   snapshot: GraphSnapshot,
@@ -109,6 +123,7 @@ export function buildVisibleGraph(
   for (const e of snapshot.edges) {
     if (!visible.has(e.aId) || !visible.has(e.bId)) continue;
     if (e.strength < filters.minStrength) continue;
+    if (!withinTimeWindow(e.lastMentioned, filters.withinMonths)) continue;
     const id = `${e.aId}:${e.bId}:${e.relType}`;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -125,6 +140,15 @@ export function buildVisibleGraph(
         lastMentioned: e.lastMentioned,
       },
     });
+  }
+
+  if (filters.hideIsolated) {
+    const connected = new Set<string>(focusId ? [focusId] : []);
+    for (const e of edges) {
+      connected.add(e.source);
+      connected.add(e.target);
+    }
+    return { nodes: nodes.filter((n) => connected.has(n.id)), edges };
   }
 
   return { nodes, edges };

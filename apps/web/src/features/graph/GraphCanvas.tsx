@@ -74,6 +74,7 @@ function Flow({ nodes, edges, jumpTo, fitNonce, onSelectNode }: GraphCanvasProps
       maxZoom={2.5}
       nodesConnectable={false}
       edgesFocusable={false}
+      deleteKeyCode={null}
       proOptions={{ hideAttribution: false }}
     >
       <Background

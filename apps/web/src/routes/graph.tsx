@@ -42,6 +42,8 @@ export const Route = createFileRoute('/graph')({
 
     const [enabledTypes, setEnabledTypes] = useState<ReadonlySet<string> | null>(null)
     const [minStrength, setMinStrength] = useState(0)
+    const [withinMonths, setWithinMonths] = useState<number | null>(null)
+    const [hideIsolated, setHideIsolated] = useState(false)
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [focusId, setFocusId] = useState<string | null>(null)
     const [jumpTo, setJumpTo] = useState<{ id: string } | null>(null)
@@ -58,11 +60,11 @@ export const Route = createFileRoute('/graph')({
               snapshot,
               layout,
               metrics,
-              { enabledTypes: effectiveTypes, minStrength },
+              { enabledTypes: effectiveTypes, minStrength, withinMonths, hideIsolated },
               focusId,
             )
           : EMPTY_GRAPH,
-      [snapshot, layout, metrics, effectiveTypes, minStrength, focusId],
+      [snapshot, layout, metrics, effectiveTypes, minStrength, withinMonths, hideIsolated, focusId],
     )
 
     const selectedEntity = useMemo(
@@ -113,6 +115,16 @@ export const Route = createFileRoute('/graph')({
             minStrength={minStrength}
             onMinStrengthChange={(value) => {
               setMinStrength(value)
+              refit()
+            }}
+            withinMonths={withinMonths}
+            onWithinMonthsChange={(months) => {
+              setWithinMonths(months)
+              refit()
+            }}
+            hideIsolated={hideIsolated}
+            onHideIsolatedChange={(hide) => {
+              setHideIsolated(hide)
               refit()
             }}
             entities={snapshot.entities}

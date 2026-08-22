@@ -21,8 +21,9 @@ const GRAVITY = 0.012;
 const COOLING = 0.92;
 const PADDING = 60;
 /**
- * Repulsion cutoff: at 350px the force (REPULSION/d² ≈ 0.98px) falls below
- * the temperature floor (≥ 1px), so farther pairs can be skipped entirely.
+ * Repulsion cutoff: at 350px a single pair's force (REPULSION/d² ≈ 0.98px)
+ * falls below the temperature floor, and even summed over many far
+ * neighbours the contribution stays small next to near-field terms.
  */
 const CUTOFF2 = 350 * 350;
 
@@ -135,8 +136,9 @@ export function computeLayout(
       ys[i] = Math.min(Math.max(ys[i] + dy[i], PADDING), height - PADDING);
     }
 
-    // Movement is bounded by temperature; once it is sub-pixel the layout
-    // has settled and remaining iterations provably change nothing.
+    // Movement per iteration is bounded by temperature. Below ~0.5px the
+    // remaining geometric tail adds at most a few px of drift over all
+    // leftover iterations — close enough to settled to stop.
     temperature *= COOLING;
   }
 
