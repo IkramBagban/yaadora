@@ -43,6 +43,13 @@
       "when": 1784203203424,
       "tag": "0005_lonely_reavers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787389235497,
+      "tag": "0006_web_admin_gaps",
+      "breakpoints": true
     }
   ]
 }
