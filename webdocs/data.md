@@ -82,4 +82,5 @@ Do not relitigate these. New decisions get appended at the bottom with a date; e
 - DRY; extract reusable components/utils instead of copying.
 - Fully typed — no `any`, ever.
 - Conventional commits: `feat(web): …`, `fix(server): …`, etc.
+- Commit organically like a real engineer: multiple small commits per PR as work progresses — one logical change per commit with a conventional-commit message. NEVER dump all work into one giant final commit.
 - Never leave typecheck or lint broken.
