@@ -97,8 +97,16 @@ async function getRedis(): Promise<RedisClient | null> {
   if (!redisPromise) {
     redisPromise = (async () => {
       try {
-        // ioredis is a transitive dep of bullmq (already in this package).
-        const Redis = (await import("ioredis")).default;
+        // ioredis is an optional transitive dep of bullmq. The specifier is
+        // typed as a plain string so type-checking does not require the module
+        // to be installed; at runtime Bun resolves it when present, and when
+        // absent the throw is caught below (tracking stays off).
+        const { default: Redis } = (await import("ioredis" as string)) as {
+          default: new (
+            url: string,
+            opts?: Record<string, unknown>,
+          ) => { connect: () => Promise<unknown> };
+        };
         const url = process.env.REDIS_URL!;
         const client = new Redis(url, {
           maxRetriesPerRequest: 1,

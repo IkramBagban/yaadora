@@ -6,6 +6,7 @@ import {
   timestamp,
   real,
   vector,
+  boolean,
   index,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
@@ -53,6 +54,11 @@ export const facts = pgTable(
     // the same period. Non-null → surface to the user ("has this changed?").
     // Plain uuid (app-level integrity, like superseded_by).
     conflictsWith: uuid("conflicts_with"),
+    // Web admin surface: hide a fact from listings without deleting it —
+    // provenance (source_memory) is never destroyed. Null = never reviewed.
+    hidden: boolean("hidden"),
+    // Free-text reviewer note, e.g. why a conflict was resolved or a fact hidden.
+    conflictNote: text("conflict_note"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

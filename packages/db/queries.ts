@@ -1442,7 +1442,8 @@ export interface EntityOpenLoop {
   kind: string;
   title: string;
   dueAt: Date | null;
-  sourceMemory: string;
+  /** null for manually planted loops (no originating memory) */
+  sourceMemory: string | null;
 }
 
 /** Open loops attached to an entity (spec 02 §5.2), most recent first. */
@@ -1465,7 +1466,7 @@ export async function getOpenLoopsForEntity(
     kind: String(r.kind),
     title: String(r.title),
     dueAt: r.due_at ? new Date(r.due_at as string) : null,
-    sourceMemory: String(r.source_memory),
+    sourceMemory: r.source_memory ? String(r.source_memory) : null,
   }));
 }
 

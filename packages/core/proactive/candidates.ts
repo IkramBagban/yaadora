@@ -170,7 +170,8 @@ export async function loadAwarenessCandidates(params: {
       subjectId: loop.id,
       title: loop.title,
       dueAt: loop.dueAt.toISOString(),
-      evidence: [loop.sourceMemory],
+      // Manual loops have no originating memory (sourceMemory null).
+      evidence: loop.sourceMemory ? [loop.sourceMemory] : [],
     });
   }
 
@@ -189,7 +190,8 @@ export async function loadAwarenessCandidates(params: {
         subjectId: loop.id,
         title: loop.title,
         dueAt: loop.dueAt ? loop.dueAt.toISOString() : null,
-        evidence: [loop.sourceMemory],
+        // Manual loops have no originating memory (sourceMemory null).
+        evidence: loop.sourceMemory ? [loop.sourceMemory] : [],
       });
     }
 
@@ -803,7 +805,8 @@ export async function scanProspectionCandidates(params: {
       oneLineNudge: prep
         ? `${loop.title} is in ${days} days — want a prep plan?`
         : `${loop.title} is ${dueLabel === localDateString(new Date(now.getTime() + DAY_MS), params.timezone) ? "tomorrow" : `on ${dueLabel}`} — want a heads-up plan?`,
-      evidence: [loop.sourceMemory],
+      // Manual loops have no originating memory (sourceMemory null).
+      evidence: loop.sourceMemory ? [loop.sourceMemory] : [],
       confidence: 0.95,
     });
   }

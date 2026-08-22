@@ -1,6 +1,6 @@
 {
-  "id": "bc9d2c31-33f0-420e-b0df-7d7b47855ad3",
-  "prevId": "c1fdb7e3-c80b-4034-a600-dfcc7e3040fb",
+  "id": "62c7e7af-3423-4522-8e48-1705c67e151e",
+  "prevId": "bc9d2c31-33f0-420e-b0df-7d7b47855ad3",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -609,6 +609,18 @@
         "conflicts_with": {
           "name": "conflicts_with",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hidden": {
+          "name": "hidden",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "conflict_note": {
+          "name": "conflict_note",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1345,7 +1357,7 @@
           "name": "source_memory",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "embedding": {
           "name": "embedding",

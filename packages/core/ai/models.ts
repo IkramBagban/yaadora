@@ -275,7 +275,7 @@ function makeModelFactory(
       const keylessOpenCode = provider === "opencode" && !apiKey;
       const effectiveApiKey = keylessOpenCode ? "opencode-free" : apiKey;
       const fetchWithoutAuth = keylessOpenCode
-        ? async (input: RequestInfo | URL, init?: RequestInit) => {
+        ? async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
             const headers = new Headers(init?.headers);
             headers.delete("authorization");
             return fetch(input, { ...init, headers });

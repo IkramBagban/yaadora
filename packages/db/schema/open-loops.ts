@@ -17,9 +17,9 @@ import { memories } from "./memories";
  *
  * Facts state what's true; loops track what's UNFINISHED — a lifecycle
  * (open → resolved | expired), not a truth value. Created by extraction and
- * consolidation; resolved when a later memory clearly closes it (provenance in
- * `resolvedBy`). `upcoming_event` loops auto-expire after `dueAt` + 7 days.
- * `sourceMemory` is provenance, always.
+ * consolidation, or planted manually via the web API (`sourceMemory` null).
+ * Resolved when a later memory clearly closes it (provenance in `resolvedBy`).
+ * `upcoming_event` loops auto-expire after `dueAt` + 7 days.
  */
 export const openLoops = pgTable(
   "open_loops",
@@ -34,9 +34,10 @@ export const openLoops = pgTable(
     dueAt: timestamp("due_at", { withTimezone: true }), // nullable; set for upcoming_event, some commitments
     status: text("status").notNull().default("open"), // open | resolved | expired
     resolvedBy: uuid("resolved_by").references(() => memories.id), // the memory that closed it, nullable
-    sourceMemory: uuid("source_memory")
-      .notNull()
-      .references(() => memories.id), // PROVENANCE
+    // PROVENANCE for extraction-derived loops. Nullable since manual planting
+    // (web API) has no originating memory — there, provenance is the user's own
+    // action and nothing synthetic is written to the immutable memories table.
+    sourceMemory: uuid("source_memory").references(() => memories.id),
     embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

@@ -312,3 +312,59 @@ export async function getMemoryDetail(
     rules: derivedRules,
   });
 }
+
+const PatchPinnedBody = z.object({
+  pinned: z.boolean(),
+});
+
+/** PATCH /memories/:id — { pinned } toggle (metadata only; raw_text untouched). */
+export async function patchMemoryPinned(
+  req: Request,
+  id: string,
+): Promise<Response> {
+  const userId = await authenticate(req);
+  if (!userId) return unauthorized();
+
+  if (!id || !z.string().uuid().safeParse(id).success) {
+    return badRequest("memory id must be a uuid.");
+  }
+
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return badRequest("Body must be valid JSON.");
+  }
+  const parsed = PatchPinnedBody.safeParse(raw);
+  if (!parsed.success) {
+    return badRequest(parsed.error.issues.map((i) => i.message).join("; "));
+  }
+
+  try {
+    const [updated] = await db
+      .update(memories)
+      .set({ pinned: parsed.data.pinned })
+      .where(and(eq(memories.id, id), eq(memories.userId, userId)))
+      .returning({
+        id: memories.id,
+        pinned: memories.pinned,
+        status: memories.status,
+        createdAt: memories.createdAt,
+      });
+    if (!updated) return notFound("Memory not found.");
+    log.info("memory pin toggled", {
+      userId,
+      memoryId: id,
+      pinned: updated.pinned,
+    });
+    return json({
+      id: updated.id,
+      pinned: updated.pinned,
+      status: updated.status,
+      createdAt: updated.createdAt.toISOString(),
+    });
+  } catch (err) {
+    log.error("patchMemoryPinned failed", err as Error);
+    return serverError();
+  }
+}
