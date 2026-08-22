@@ -48,3 +48,35 @@ export interface RebuildJob {
   jobId: string;
   status: 'queued' | 'running' | 'done' | 'failed' | (string & {});
 }
+
+// --- data export (S-3) -------------------------------------------------------
+
+/** Download format: full JSON dump or Markdown journal. */
+export type ExportFormat = 'json' | 'markdown';
+
+// Minimal shapes for list endpoints without shared wire types yet. Fields are
+// taken from the server serializers (`apps/server/src/routes/*.ts`) and the
+// db schema — not invented.
+
+/** GET /open-loops item (subset relevant to exports). */
+export interface ExportOpenLoop {
+  id: string;
+  kind: string;
+  title: string;
+  status: string;
+  dueAt: string | null;
+  createdAt: string;
+}
+
+/** GET /digests item. */
+export interface ExportDigest {
+  kind: string;
+  content: string;
+  updatedAt: string;
+}
+
+/** One page of a cursor-paginated listing ({items, nextCursor}). */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
