@@ -20,10 +20,15 @@ const VIEW_OPTIONS: Array<{ value: FactView; label: string }> = [
 /**
  * Facts explorer: current beliefs vs full supersession history, grouped by
  * subject, with a conflicts inbox on top. Every fact links back to the memory
- * it was extracted from (slide-over drawer).
+ * it was extracted from (slide-over drawer). Controlled by the route — the
+ * view toggle lives in the URL (?view=current|history).
  */
-export function FactsPage() {
-  const [view, setView] = useState<FactView>('current')
+export interface FactsPageProps {
+  view: FactView
+  onViewChange: (view: FactView) => void
+}
+
+export function FactsPage({ view, onViewChange }: FactsPageProps) {
   const [subjectInput, setSubjectInput] = useState('')
   const subject = useDebouncedValue(subjectInput, 300)
   const [sourceMemory, setSourceMemory] = useState<string | null>(null)
@@ -54,7 +59,7 @@ export function FactsPage() {
               key={opt.value}
               type="button"
               aria-pressed={view === opt.value}
-              onClick={() => setView(opt.value)}
+              onClick={() => onViewChange(opt.value)}
               className={`rounded-sm px-lg py-1.5 text-caption-medium transition-colors ${
                 view === opt.value
                   ? 'bg-accent-soft text-accent'
