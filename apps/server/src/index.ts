@@ -31,6 +31,7 @@ import {
   patchPrivacySettings,
 } from "./routes/settings";
 import { listRules, patchRule } from "./routes/rules";
+import { createRule, ruleHistory } from "./routes/rules-manage";
 import {
   getEntityContext,
   flagEntityEdgeRoute,
@@ -189,12 +190,16 @@ const routeTable: Record<string, Record<string, Handler>> = {
   "/digests": {
     GET: (req) => listDigests(req),
   },
-  // Standing rules (spec 02 §8, P1)
+  // Standing rules (spec 02 §8, P1) + rules manager (issue #12)
   "/rules": {
     GET: (req) => listRules(req),
+    POST: (req) => createRule(req),
   },
   "/rules/:id": {
     PATCH: (req) => patchRule(req, req.params.id!),
+  },
+  "/rules/:id/history": {
+    GET: (req) => ruleHistory(req, req.params.id!),
   },
   "/rules/:id/test": {
     POST: (req) => testRuleRoute(req, req.params.id!),
