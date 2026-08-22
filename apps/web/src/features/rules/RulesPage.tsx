@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Button } from '../../../components/ui/Button'
-import { Spinner } from '../../../components/ui/Spinner'
-import { useRules } from '../hooks'
-import type { StandingRule } from '../../../api/types'
-import { RuleCard } from './RuleCard'
-import { RuleEditor } from './RuleEditor'
+import { Button } from '../../components/ui/Button'
+import { Spinner } from '../../components/ui/Spinner'
+import { useRules } from './hooks'
+import type { StandingRule } from '../../api/types'
+import { RuleCard } from './components/RuleCard'
+import { RuleEditor } from './components/RuleEditor'
 
 type Filter = 'all' | 'active' | 'paused'
 
@@ -28,7 +28,8 @@ export function RulesPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [creating, setCreating] = useState(false)
   const query = useRules()
-  const rules = query.data?.rules ?? []
+  // Memoized so downstream useMemo/useEffect deps stay stable across renders.
+  const rules = useMemo(() => query.data?.rules ?? [], [query.data])
 
   const counts = useMemo(
     () => ({
