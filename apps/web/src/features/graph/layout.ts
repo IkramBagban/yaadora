@@ -20,6 +20,11 @@ const SPRING = 0.06;
 const GRAVITY = 0.012;
 const COOLING = 0.92;
 const PADDING = 60;
+/**
+ * Repulsion cutoff: at 350px the force (REPULSION/d² ≈ 0.98px) falls below
+ * the temperature floor (≥ 1px), so farther pairs can be skipped entirely.
+ */
+const CUTOFF2 = 350 * 350;
 
 /**
  * Deterministic force-directed layout (Fruchterman–Reingold style):
@@ -74,15 +79,18 @@ export function computeLayout(
   const cy = height / 2;
   let temperature = Math.min(width, height) / 8;
 
-  for (let iter = 0; iter < iterations; iter++) {
+  for (let iter = 0; iter < iterations && temperature >= 0.5; iter++) {
     dx.fill(0);
     dy.fill(0);
 
     for (let i = 0; i < n; i++) {
+      const xi = xs[i];
+      const yi = ys[i];
       for (let j = i + 1; j < n; j++) {
-        let fx = xs[i] - xs[j];
-        let fy = ys[i] - ys[j];
+        let fx = xi - xs[j];
+        let fy = yi - ys[j];
         let d2 = fx * fx + fy * fy;
+        if (d2 > CUTOFF2) continue;
         if (d2 < 1) {
           // Coincident pair: nudge apart deterministically by index order.
           fx = i < j ? 1 : -1;
@@ -91,12 +99,13 @@ export function computeLayout(
         }
         const d = Math.sqrt(d2);
         const force = Math.min(REPULSION / d2, 4 * temperature);
-        const ux = fx / d;
-        const uy = fy / d;
-        dx[i] += ux * force;
-        dy[i] += uy * force;
-        dx[j] -= ux * force;
-        dy[j] -= uy * force;
+        const scale = force / d;
+        const ux = fx * scale;
+        const uy = fy * scale;
+        dx[i] += ux;
+        dy[i] += uy;
+        dx[j] -= ux;
+        dy[j] -= uy;
       }
     }
 
@@ -117,7 +126,7 @@ export function computeLayout(
       dx[i] += (cx - xs[i]) * GRAVITY;
       dy[i] += (cy - ys[i]) * GRAVITY;
 
-      const disp = Math.hypot(dx[i], dy[i]);
+      const disp = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]);
       if (disp > temperature) {
         dx[i] = (dx[i] / disp) * temperature;
         dy[i] = (dy[i] / disp) * temperature;
@@ -126,7 +135,9 @@ export function computeLayout(
       ys[i] = Math.min(Math.max(ys[i] + dy[i], PADDING), height - PADDING);
     }
 
-    temperature = Math.max(temperature * COOLING, 1);
+    // Movement is bounded by temperature; once it is sub-pixel the layout
+    // has settled and remaining iterations provably change nothing.
+    temperature *= COOLING;
   }
 
   for (let i = 0; i < n; i++) {
