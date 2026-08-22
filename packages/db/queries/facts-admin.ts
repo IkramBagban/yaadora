@@ -29,6 +29,10 @@ export interface AdminFact {
   origin: string;
   validFrom: Date | null;
   validTo: Date | null;
+  /** the newer fact that replaced this one (null on current heads) */
+  supersededBy: string | null;
+  /** the incompatible fact this one is cross-flagged with (conflicts inbox) */
+  conflictsWith: string | null;
   /** conflicts_with IS NOT NULL */
   conflicted: boolean;
   hidden: boolean;
@@ -97,6 +101,7 @@ export async function listFactsAdmin(
            f.object_id, eo.canonical_name AS object_name,
            f.predicate, f.object_text, f.fact_text, f.confidence,
            f.fact_type, f.origin, f.valid_from, f.valid_to,
+           f.superseded_by, f.conflicts_with,
            (f.conflicts_with IS NOT NULL) AS conflicted,
            COALESCE(f.hidden, FALSE) AS hidden,
            f.conflict_note, f.source_memory, f.created_at
@@ -122,6 +127,8 @@ export async function listFactsAdmin(
     origin: String(r.origin),
     validFrom: r.valid_from ? new Date(r.valid_from as string) : null,
     validTo: r.valid_to ? new Date(r.valid_to as string) : null,
+    supersededBy: r.superseded_by ? String(r.superseded_by) : null,
+    conflictsWith: r.conflicts_with ? String(r.conflicts_with) : null,
     conflicted: Boolean(r.conflicted),
     hidden: Boolean(r.hidden),
     conflictNote: r.conflict_note ? String(r.conflict_note) : null,
@@ -165,6 +172,7 @@ export async function patchFactAdmin(
       origin: facts.origin,
       validFrom: facts.validFrom,
       validTo: facts.validTo,
+      supersededBy: facts.supersededBy,
       conflictsWith: facts.conflictsWith,
       hidden: facts.hidden,
       conflictNote: facts.conflictNote,
@@ -198,6 +206,8 @@ export async function patchFactAdmin(
     origin: row.origin,
     validFrom: row.validFrom,
     validTo: row.validTo,
+    supersededBy: row.supersededBy,
+    conflictsWith: row.conflictsWith,
     conflicted: row.conflictsWith != null,
     hidden: row.hidden ?? false,
     conflictNote: row.conflictNote,

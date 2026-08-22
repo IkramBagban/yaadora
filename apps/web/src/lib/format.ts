@@ -1,3 +1,28 @@
+const dateTimeFmt = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
+const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : dateTimeFmt.format(d)
+}
+
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return 'unknown'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? 'unknown' : dateFmt.format(d)
+}
+
+/** 0..1 → "72%" (confidence display; null treated as unknown). */
+export function formatPercent(value: number | null | undefined): string {
+  if (value == null) return '—'
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+}
+
 /** Compact relative time: "5m ago", "3d ago", "in 2h". Empty for unset/invalid. */
 export function formatRelative(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -22,12 +47,4 @@ export function formatRelative(iso: string | null | undefined): string {
 
   const years = Math.round(months / 12);
   return future ? `in ${years}y` : `${years}y ago`;
-}
-
-/** "Aug 14, 2026" style absolute date for receipts and due dates. */
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }

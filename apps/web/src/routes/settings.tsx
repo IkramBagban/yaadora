@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { PlaceholderPage } from '../components/layout/PlaceholderPage'
+import { SettingsPage } from '../features/settings/SettingsPage'
 
 export const Route = createFileRoute('/settings')({
-  component: () => <PlaceholderPage title="Settings" track="settings" />,
+  component: SettingsPage,
 })
