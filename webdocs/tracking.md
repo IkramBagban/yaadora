@@ -14,6 +14,8 @@
 
 Branches: `<type>/<name>` off `origin/web` (`feat/…`, `fix/…`, `docs/…`), PRs target `web`; never `web/*` (git rejects any `web/*` ref while the `web` integration branch exists).
 
+Commit as you go — push incremental logical commits; PRs may contain many commits.
+
 1. Orchestrator/lead picks unchecked items, creates GitHub issues (one per item), writes the issue # next to the item.
 2. Agent claims the issue, reads `webdocs/data.md` → this file → its track file, then implements.
 3. In the SAME PR as the code, the worker must:
