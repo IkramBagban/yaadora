@@ -75,13 +75,13 @@ export function CaptureHeatmap() {
     return { columns, total, best }
   }, [data])
 
-  const showCell = (e: React.MouseEvent<HTMLDivElement>, date: Date, count: number) => {
-    const cell = e.currentTarget.getBoundingClientRect()
+  const showCell = (cell: HTMLElement, date: Date, count: number) => {
+    const cellRect = cell.getBoundingClientRect()
     const box = containerRef.current?.getBoundingClientRect()
     if (!box) return
     setHover({
-      x: cell.left - box.left + cell.width / 2,
-      y: cell.top - box.top,
+      x: cellRect.left - box.left + cellRect.width / 2,
+      y: cellRect.top - box.top,
       label: utcDayLabel(dayKey(date)),
       count,
     })
@@ -105,7 +105,16 @@ export function CaptureHeatmap() {
       ) : weeks.total === 0 ? (
         <WidgetEmpty>Captured memories will appear here, one square per day.</WidgetEmpty>
       ) : (
-        <div ref={containerRef} className="relative w-fit" onMouseLeave={() => setHover(null)}>
+        <div
+          ref={containerRef}
+          role="group"
+          aria-label="Capture calendar, one day button per square"
+          className="relative w-fit"
+          onMouseLeave={() => setHover(null)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHover(null)
+          }}
+        >
           <div className="flex gap-[3px]">
             <div className="mr-xs flex flex-col gap-[3px] pt-[14px]" aria-hidden="true">
               {[1, 3, 5].map((dow) => (
@@ -131,13 +140,21 @@ export function CaptureHeatmap() {
                 {weeks.columns.map((column) => (
                   <div key={dayKey(column[0]!.date)} className="flex flex-col gap-[3px]">
                     {column.map(({ date, count, future }) => (
-                      <div
+                      <button
                         key={dayKey(date)}
-                        role="gridcell"
+                        type="button"
                         aria-label={`${utcDayLabel(dayKey(date))}: ${count} ${count === 1 ? 'memory' : 'memories'}`}
-                        className={`h-[13px] w-[13px] rounded-[3px] ${future ? 'invisible' : 'cursor-default'}`}
+                        className={`h-[13px] w-[13px] rounded-[3px] border-0 p-0 ${
+                          future
+                            ? 'invisible'
+                            : 'cursor-default focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent'
+                        }`}
                         style={{ backgroundColor: future ? undefined : LEVEL_MIX[levelFor(count)] }}
-                        onMouseEnter={(e) => showCell(e, date, count)}
+                        onMouseEnter={(e) => showCell(e.currentTarget, date, count)}
+                        onFocus={(e) => showCell(e.currentTarget, date, count)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setHover(null)
+                        }}
                       />
                     ))}
                   </div>

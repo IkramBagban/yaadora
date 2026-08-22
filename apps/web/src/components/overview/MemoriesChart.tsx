@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -27,20 +27,34 @@ const TOKEN_BY_SOURCE: Record<string, string> = {
 
 const FALLBACK_TOKEN = '--c-ink2'
 
-const sourceRank = (source: string): number => {
-  const i = (SOURCE_ORDER as readonly string[]).indexOf(source)
-  return i === -1 ? SOURCE_ORDER.length : i
+/** Axis ticks and gridlines, resolved as raw token names (not source keys). */
+const AXIS_TOKENS = ['--c-ink3', '--c-hairline'] as const
+
+/** Reads a raw CSS variable from the document root. */
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
 /**
- * Reads resolved CSS variables so chart colors follow the active theme.
- * Re-reads happen on the re-render ThemeContext triggers when the theme flips.
+ * Resolves raw CSS variables and keeps them fresh across theme flips. The
+ * theme class is applied in a parent effect, so the post-commit read is
+ * deferred one frame; render-time reads would lag one flip behind.
+ * `tokens` must have a stable identity (module const or memoized).
  */
-function useChartColors(sources: string[]): string[] {
+function useThemeVars(tokens: readonly string[]): string[] {
   const { resolved } = useTheme()
-  if (resolved !== 'light' && resolved !== 'dark') return []
-  const styles = getComputedStyle(document.documentElement)
-  return sources.map((source) => styles.getPropertyValue(TOKEN_BY_SOURCE[source] ?? FALLBACK_TOKEN).trim())
+  const [values, setValues] = useState<string[]>(() => tokens.map(cssVar))
+  useEffect(() => {
+    if (resolved !== 'light' && resolved !== 'dark') return
+    const frame = requestAnimationFrame(() => setValues(tokens.map(cssVar)))
+    return () => cancelAnimationFrame(frame)
+  }, [resolved, tokens])
+  return values
+}
+
+const sourceRank = (source: string): number => {
+  const i = (SOURCE_ORDER as readonly string[]).indexOf(source)
+  return i === -1 ? SOURCE_ORDER.length : i
 }
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
@@ -97,9 +111,12 @@ export function MemoriesChart() {
     return { rows, sources }
   }, [data, bucket])
 
-  const colors = useChartColors(sources)
-  const axisColor = useChartColors(['--c-ink3'])[0] ?? ''
-  const gridColor = useChartColors(['--c-hairline'])[0] ?? ''
+  const sourceTokens = useMemo(
+    () => sources.map((source) => TOKEN_BY_SOURCE[source] ?? FALLBACK_TOKEN),
+    [sources],
+  )
+  const colors = useThemeVars(sourceTokens)
+  const [axisColor, gridColor] = useThemeVars(AXIS_TOKENS)
   const hasData = rows.length > 0 && rows.some((r) => sources.some((s) => (r[s] as number) > 0))
 
   return (
