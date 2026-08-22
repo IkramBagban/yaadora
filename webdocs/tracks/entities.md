@@ -4,15 +4,20 @@ Schema refs: `packages/db/schema/entities.ts`, `entity-edges.ts`, `memory-entiti
 
 ## Checklist
 
-- [ ] **E-1** Entities directory — AC: paginated, searchable list of entities; columns for type, mention_count; sort by mentions/recency.
-- [ ] **E-2** Entity profile page — AC: routed page per entity with overview header (name, type, mention count) and sections below.
-- [ ] **E-3** Validity bars — AC: visual bar per fact/relationship showing valid_from→valid_to spans; expired segments visually distinct.
-- [ ] **E-4** Supersession history — AC: collapsed-by-default history of superseded facts; expandable chain showing what replaced what (`superseded_by`).
-- [ ] **E-5** Conflicts highlighted — AC: facts with `conflicts_with` render a conflict badge linking to Facts Explorer inbox.
-- [ ] **E-6** Mention-trend sparkline — AC: sparkline of mentions over time on the profile; data from timeseries endpoint filtered to entity.
-- [ ] **E-7** Receipts — AC: "receipts" section listing the memories that mention the entity (source evidence), each linking to memory detail.
-- [ ] **E-8** Merge UI — AC: select two+ entities → merge dialog previewing result; confirm calls `POST /entities/merge`; handles undo-safe messaging.
+- [x] **E-1** Entities directory — card grid; search (name/type), filter by type chips, sort by mentions/recency/name; mention counts + last-seen on every card.
+- [x] **E-2** Entity profile page — routed `/entities/$id` dossier: header (name, type, mentions, last seen), AI profile summary, facts, loops, relations, receipts sections below.
+- [x] **E-3** Validity bars — per-fact `valid_from→valid_to` span positioned inside the entity observation window; closed spans muted vs accent for current.
+- [x] **E-4** Supersession history — collapsed-by-default section; per-predicate chains oldest→newest showing what replaced what.
+- [x] **E-5** Conflicts highlighted — conflicted facts get a danger badge + section banner linking to the Facts Explorer inbox (`/facts`).
+- [x] **E-6** Mention-trend sparkline — 12-month SVG sparkline on the profile, derived from receipt memory dates.
+- [x] **E-7** Receipts — provenance memories listed as tappable sources; expand inline, deep-link to `/timeline?memory=<id>` (focus honoured when the timeline track ships detail view).
+- [x] **E-8** Merge UI — tick two entities on the directory → floating bar → dialog previews remaps (mention fold, alias union, edge rebuild) → confirm calls `POST /entities/merge`; success shows the audit summary with undo-safe messaging.
 
 ## Learnings
 
 (gotcha → fix → date)
+
+- `GET /entities` and `/entities/:id/context` don't project `aliases`; directory/profile render without them until the server adds one line to each projection. → tracked as follow-up, not worked around client-side. → 2026-08-22
+- `/stats/timeseries` counts memories per bucket but cannot filter to an entity → profile derives its mention trend client-side from receipt `occurredAt ?? createdAt`, bucketed into UTC months. → 2026-08-22
+- `GET /facts` history view exposes bitemporal spans + `conflicted` flag but not the raw `superseded_by` uuid → supersession chains are rendered per-predicate (oldest→newest), which reconstructs what-replaced-what without inventing fields. → 2026-08-22
+- Entity context edges carry evidence receipt counts, not the raw `strength` real → relations meter scales over a 5-receipt ceiling instead of faking a strength score. → 2026-08-22
