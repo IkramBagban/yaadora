@@ -328,3 +328,35 @@ export interface MemorySearchResponse {
   memories: MemorySearchItem[];
   facts: FactSearchItem[];
 }
+
+// --- knowledge graph page ----------------------------------------------------
+
+/** A node in GET /graph/snapshot (entities capped at 400 by mentions). */
+export interface GraphSnapshotEntity {
+  id: string;
+  type: string;
+  canonicalName: string;
+  mentionCount: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+}
+
+/** An edge in GET /graph/snapshot (capped at 300 by strength). */
+export interface GraphSnapshotEdge {
+  aId: string;
+  bId: string;
+  aName: string;
+  bName: string;
+  relType: string;
+  status: string;
+  strength: number;
+  lastMentioned: string | null;
+  evidence: string[];
+}
+
+/** GET /graph/snapshot */
+export interface GraphSnapshot {
+  entities: GraphSnapshotEntity[];
+  edges: GraphSnapshotEdge[];
+  memoryWindowDays: number;
+}
