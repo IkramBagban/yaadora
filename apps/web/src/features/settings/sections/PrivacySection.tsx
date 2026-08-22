@@ -1,0 +1,232 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useBlocker } from '@tanstack/react-router'
+import { Loader2 } from 'lucide-react'
+import { Button } from '../../../components/ui/Button'
+import { Input } from '../../../components/ui/Input'
+import { ApiError } from '../../../api/client'
+import { Field, SettingsSection, StatusBanner, ToggleSwitch } from '../ui'
+import { usePrivacySettings, useUpdatePrivacySettings } from '../hooks'
+import type { PrivacyPatch, PrivacySettings } from '../types'
+
+/** Select choices for `transcriptRetentionDays`. `forever` → null, `0` =
+ * discard once digested, N = keep N days. Matches the server contract. */
+const RETENTION_CHOICES = [
+  { value: 'forever', label: 'Keep forever' },
+  { value: '0', label: 'Discard after digesting' },
+  { value: '7', label: 'Keep 7 days' },
+  { value: '30', label: 'Keep 30 days' },
+  { value: '90', label: 'Keep 90 days' },
+  { value: '365', label: 'Keep 1 year' },
+] as const
+
+type RetentionValue = (typeof RETENTION_CHOICES)[number]['value']
+
+function isRetentionValue(v: string): v is RetentionValue {
+  return RETENTION_CHOICES.some((c) => c.value === v)
+}
+
+function retentionToChoice(days: number | null): RetentionValue {
+  const raw = days === null ? 'forever' : String(days)
+  return isRetentionValue(raw) ? raw : 'forever'
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+interface Draft {
+  retention: RetentionValue
+  quietStart: string
+  quietEnd: string
+  budget: string
+  insightsEnabled: boolean
+}
+
+function toDraft(s: PrivacySettings): Draft {
+  return {
+    retention: retentionToChoice(s.transcriptRetentionDays),
+    quietStart: s.quietHoursStart.slice(0, 5),
+    quietEnd: s.quietHoursEnd.slice(0, 5),
+    budget: String(s.maxDailySurfacings),
+    insightsEnabled: s.insightsEnabled,
+  }
+}
+
+function validate(d: Draft): string | null {
+  if (!TIME_RE.test(d.quietStart) || !TIME_RE.test(d.quietEnd)) {
+    return 'Quiet hours must be valid HH:MM times.'
+  }
+  if (d.quietStart === d.quietEnd) {
+    return 'Quiet hours start and end cannot be identical.'
+  }
+  const budget = Number(d.budget)
+  if (!Number.isInteger(budget) || budget < 0 || budget > 50) {
+    return 'Daily surfacing budget must be a whole number between 0 and 50.'
+  }
+  return null
+}
+
+export function PrivacySection() {
+  const query = usePrivacySettings()
+  const update = useUpdatePrivacySettings()
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+
+  const saved = query.data
+  useEffect(() => {
+    if (saved && !draft) setDraft(toDraft(saved))
+  }, [saved, draft])
+
+  const dirty = useMemo(
+    () => Boolean(saved && draft && JSON.stringify(toDraft(saved)) !== JSON.stringify(draft)),
+    [saved, draft],
+  )
+
+  // Dirty-state guard: confirm before leaving with unsaved edits (S-1).
+  useBlocker({
+    shouldBlockFn: () => {
+      if (!dirty) return false
+      return !window.confirm('You have unsaved privacy changes. Leave anyway?')
+    },
+  })
+  useEffect(() => {
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
+
+  const validationError = draft ? validate(draft) : null
+
+  /** Merge a partial edit into the draft and clear stale save feedback. */
+  function edit(partial: Partial<Draft>): void {
+    if (!draft) return
+    setDraft({ ...draft, ...partial })
+    setFeedback(null)
+  }
+
+  function handleSave(): void {
+    if (!draft || validationError) return
+    const patch: PrivacyPatch = {
+      transcriptRetentionDays: draft.retention === 'forever' ? null : Number(draft.retention),
+      quietHoursStart: draft.quietStart,
+      quietHoursEnd: draft.quietEnd,
+      maxDailySurfacings: Number(draft.budget),
+      insightsEnabled: draft.insightsEnabled,
+    }
+    update.mutate(patch, {
+      onSuccess: () =>
+        setFeedback({ kind: 'success', message: 'Privacy settings saved.' }),
+      onError: (err: Error) =>
+        setFeedback({
+          kind: 'error',
+          message: err instanceof ApiError ? err.message : 'Could not save settings.',
+        }),
+    })
+  }
+
+  return (
+    <SettingsSection
+      id="privacy"
+      title="Privacy"
+      description="Control what stays, when things surface, and how proactive the system may be."
+    >
+      {query.isPending ? <p className="text-sub text-ink2">Loading…</p> : null}
+      {query.isError ? (
+        <StatusBanner kind="error" message="Could not load your privacy settings." />
+      ) : null}
+
+      {draft ? (
+        <div className="flex flex-col gap-lg">
+          <Field label="Transcript retention" htmlFor="retention">
+            <select
+              id="retention"
+              value={draft.retention}
+              onChange={(e) => {
+                const next = e.target.value
+                if (isRetentionValue(next)) {
+                  edit({ retention: next })
+                }
+              }}
+              className="h-10 rounded-md border border-hairline bg-surface px-md text-body text-ink focus:border-accent focus:outline-none"
+            >
+              {RETENTION_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <div className="grid grid-cols-1 gap-lg sm:grid-cols-2">
+            <Field label="Quiet hours start" htmlFor="quiet-start" hint="No surfacing before this local time.">
+              <Input
+                id="quiet-start"
+                type="time"
+                value={draft.quietStart}
+                onChange={(e) => edit({ quietStart: e.target.value })}
+              />
+            </Field>
+            <Field label="Quiet hours end" htmlFor="quiet-end">
+              <Input
+                id="quiet-end"
+                type="time"
+                value={draft.quietEnd}
+                onChange={(e) => edit({ quietEnd: e.target.value })}
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Daily surfacing budget"
+            htmlFor="budget"
+            hint="Maximum proactive nudges per day across all channels (0–50)."
+          >
+            <Input
+              id="budget"
+              type="number"
+              min={0}
+              max={50}
+              step={1}
+              value={draft.budget}
+              onChange={(e) => edit({ budget: e.target.value })}
+              className="max-w-32"
+            />
+          </Field>
+
+          <div className="flex items-center justify-between gap-lg">
+            <div>
+              <p className="text-caption-medium text-ink">Insights</p>
+              <p className="text-micro text-ink3">
+                Inferred nudges (intentions, patterns). Lookups like reminders stay on.
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={draft.insightsEnabled}
+              onChange={(next) => edit({ insightsEnabled: next })}
+              label="Insights"
+              disabled={update.isPending}
+            />
+          </div>
+
+          {validationError ? (
+            <StatusBanner kind="error" message={validationError} />
+          ) : null}
+          {!validationError && feedback ? (
+            <StatusBanner kind={feedback.kind} message={feedback.message} />
+          ) : null}
+
+          <div className="flex items-center gap-md">
+            <Button onClick={handleSave} disabled={!dirty || Boolean(validationError) || update.isPending}>
+              {update.isPending ? <Loader2 size={16} className="animate-spin" /> : null}
+              Save changes
+            </Button>
+            {saved ? (
+              <Button variant="ghost" disabled={!dirty || update.isPending} onClick={() => setDraft(toDraft(saved))}>
+                Discard
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </SettingsSection>
+  )
+}
