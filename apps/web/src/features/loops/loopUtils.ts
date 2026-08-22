@@ -1,3 +1,4 @@
+import type { DragEvent as ReactDragEvent } from 'react'
 import {
   CalendarClock,
   Flag,
@@ -84,6 +85,23 @@ export function formatDue(dueAt: string | null, now = new Date()): string | null
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+// --- drag & drop ------------------------------------------------------------
+
+/** dataTransfer key carrying the dragged loop id between kanban columns. */
+const LOOP_DRAG_MIME = 'application/x-yaadora-loop-id'
+
+export function setLoopDragData(
+  event: ReactDragEvent<Element>,
+  id: string,
+): void {
+  event.dataTransfer.setData(LOOP_DRAG_MIME, id)
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+export function getLoopDragData(event: ReactDragEvent<Element>): string | null {
+  return event.dataTransfer.getData(LOOP_DRAG_MIME) || null
 }
 
 // --- aging stats ------------------------------------------------------------
