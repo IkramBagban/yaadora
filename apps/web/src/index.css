@@ -1,1 +1,108 @@
-@import "tailwindcss";
+@import '@fontsource-variable/instrument-sans';
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * "ink & paper" design tokens, ported from apps/mobile/src/theme/tokens.ts.
+ * Light palette is the default (:root); .dark overrides it. Both themes are
+ * first-class. Utilities resolve through @theme inline so switching the class
+ * on <html> swaps every token at runtime.
+ */
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-alt: var(--c-surface-alt);
+  --color-ink: var(--c-ink);
+  --color-ink2: var(--c-ink2);
+  --color-ink3: var(--c-ink3);
+  --color-hairline: var(--c-hairline);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-on-accent: var(--c-on-accent);
+  --color-success: var(--c-success);
+  --color-danger: var(--c-danger);
+  --color-pending: var(--c-pending);
+
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 0.75rem;
+  --spacing-lg: 1rem;
+  --spacing-xl: 1.25rem;
+  --spacing-xxl: 1.5rem;
+  --spacing-xxxl: 2rem;
+  --spacing-huge: 3rem;
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --text-display: 26px;
+  --text-display--line-height: 32px;
+  --text-display--letter-spacing: -0.6px;
+
+  --text-title: 19px;
+  --text-title--line-height: 25px;
+  --text-title--letter-spacing: -0.3px;
+
+  --text-serif-body: 16px;
+  --text-serif-body--line-height: 24px;
+  --text-serif-body--letter-spacing: -0.1px;
+
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+
+  --text-sub: 14px;
+  --text-sub--line-height: 20px;
+
+  --text-caption: 12.5px;
+  --text-caption--line-height: 17px;
+
+  --text-caption-medium: 12.5px;
+  --text-caption-medium--line-height: 17px;
+  --text-caption-medium--font-weight: 500;
+
+  --text-micro: 11px;
+  --text-micro--line-height: 14px;
+  --text-micro--letter-spacing: 0.8px;
+  --text-micro--font-weight: 500;
+}
+
+:root {
+  --c-bg: #fbfaf7;
+  --c-surface: #ffffff;
+  --c-surface-alt: #f3f0ea;
+  --c-ink: #1a1815;
+  --c-ink2: #6e675f;
+  --c-ink3: #aba49a;
+  --c-hairline: rgba(26, 24, 21, 0.08);
+  --c-accent: #9c5227;
+  --c-accent-soft: #f4e8dd;
+  --c-on-accent: #fdfbf8;
+  --c-success: #4c7a5c;
+  --c-danger: #b3574d;
+  --c-pending: #b08948;
+  color-scheme: light;
+}
+
+.dark {
+  --c-bg: #141210;
+  --c-surface: #1d1b18;
+  --c-surface-alt: #26221e;
+  --c-ink: #f1ede6;
+  --c-ink2: #9e978c;
+  --c-ink3: #6b655c;
+  --c-hairline: rgba(241, 237, 230, 0.08);
+  --c-accent: #e29a63;
+  --c-accent-soft: #2b2119;
+  --c-on-accent: #1a120b;
+  --c-success: #7fb08f;
+  --c-danger: #d98a80;
+  --c-pending: #c9a265;
+  color-scheme: dark;
+}
