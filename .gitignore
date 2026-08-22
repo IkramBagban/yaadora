@@ -66,4 +66,8 @@ docs/
 *.md
 !README.md
 
+# Agent alignment docs for the web app (tracked intentionally)
+!/webdocs/
+!/webdocs/**
+
 .env.prod
