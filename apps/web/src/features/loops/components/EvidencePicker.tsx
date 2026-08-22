@@ -19,18 +19,16 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
   const [results, setResults] = useState<EvidenceMemory[]>([])
   const [loading, setLoading] = useState(false)
   const seq = useRef(0)
+  // Derived during render so short queries need no effect-driven resets.
+  const active = query.trim().length >= 2
 
   useEffect(() => {
     const trimmed = query.trim()
-    if (trimmed.length < 2) {
-      setResults([])
-      setLoading(false)
-      return
-    }
-    setLoading(true)
+    if (!active) return
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
       const current = ++seq.current
+      setLoading(true)
       searchEvidenceMemories(trimmed, controller.signal)
         .then((res) => {
           if (current === seq.current) setResults(res.memories)
@@ -47,7 +45,7 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [query])
+  }, [query, active])
 
   return (
     <div className="flex flex-col gap-sm">
@@ -93,7 +91,7 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
         })}
       </ul>
 
-      {!loading && query.trim().length >= 2 && results.length === 0 && (
+      {!loading && active && results.length === 0 && (
         <p className="px-xs text-caption text-ink3">No matching memories.</p>
       )}
     </div>
