@@ -17,10 +17,14 @@ interface EvidencePickerProps {
 export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<EvidenceMemory[]>([])
+  /** The trimmed query the current `results` belong to — guards staleness. */
+  const [resultsFor, setResultsFor] = useState('')
   const [loading, setLoading] = useState(false)
   const seq = useRef(0)
   // Derived during render so short queries need no effect-driven resets.
   const active = query.trim().length >= 2
+  // Only ever show results that answer the text currently in the box.
+  const fresh = resultsFor === query.trim() && active
 
   useEffect(() => {
     const trimmed = query.trim()
@@ -31,7 +35,10 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
       setLoading(true)
       searchEvidenceMemories(trimmed, controller.signal)
         .then((res) => {
-          if (current === seq.current) setResults(res.memories)
+          if (current === seq.current) {
+            setResults(res.memories)
+            setResultsFor(trimmed)
+          }
         })
         .catch(() => {
           // Aborted or failed — keep previous results; picker stays usable.
@@ -68,7 +75,8 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
       )}
 
       <ul className="flex max-h-56 flex-col gap-xs overflow-y-auto">
-        {results.map((memory) => {
+        {fresh &&
+          results.map((memory) => {
           const selected = memory.id === value
           const when = (memory.occurredAt ?? memory.createdAt).slice(0, 10)
           return (
@@ -91,7 +99,7 @@ export function EvidencePicker({ value, onChange }: EvidencePickerProps) {
         })}
       </ul>
 
-      {!loading && active && results.length === 0 && (
+      {!loading && active && fresh && results.length === 0 && (
         <p className="px-xs text-caption text-ink3">No matching memories.</p>
       )}
     </div>

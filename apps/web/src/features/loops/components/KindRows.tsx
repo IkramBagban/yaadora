@@ -8,6 +8,8 @@ interface KindRowsProps {
   onOpen: (loop: Loop) => void
   onConvert: (loop: Loop) => void
   onResolve: (loop: Loop) => void
+  /** True while a loop action is in flight; disables card actions. */
+  busy?: boolean
 }
 
 /**
@@ -15,7 +17,7 @@ interface KindRowsProps {
  * the exact card actions with the kanban. Unknown extraction kinds get their
  * own trailing lane so nothing disappears from the board.
  */
-export function KindRows({ loops, now, onOpen, onConvert, onResolve }: KindRowsProps) {
+export function KindRows({ loops, now, onOpen, onConvert, onResolve, busy = false }: KindRowsProps) {
   const lanes = groupByKind(loops)
   const nonEmpty = [...lanes.entries()].filter(([, items]) => items.length > 0)
 
@@ -47,6 +49,7 @@ export function KindRows({ loops, now, onOpen, onConvert, onResolve }: KindRowsP
                   key={loop.id}
                   loop={loop}
                   now={now}
+                  busy={busy}
                   onOpen={onOpen}
                   onConvert={onConvert}
                   onResolve={onResolve}

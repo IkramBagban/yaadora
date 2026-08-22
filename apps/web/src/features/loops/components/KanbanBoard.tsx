@@ -12,6 +12,8 @@ interface KanbanBoardProps {
   onResolve: (loop: Loop) => void
   /** Persist a card dropped into another lifecycle column. */
   onMove: (id: string, status: LoopStatus) => void
+  /** True while a loop action is in flight; disables card actions. */
+  busy?: boolean
 }
 
 /**
@@ -25,6 +27,7 @@ export function KanbanBoard({
   onConvert,
   onResolve,
   onMove,
+  busy = false,
 }: KanbanBoardProps) {
   const [hoverColumn, setHoverColumn] = useState<LoopStatus | null>(null)
 
@@ -70,7 +73,8 @@ export function KanbanBoard({
                   key={loop.id}
                   loop={loop}
                   now={now}
-                  draggable
+                  draggable={!busy}
+                  busy={busy}
                   onOpen={onOpen}
                   onConvert={onConvert}
                   onResolve={onResolve}

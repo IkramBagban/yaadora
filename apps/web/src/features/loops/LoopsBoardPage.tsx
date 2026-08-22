@@ -69,8 +69,20 @@ export function LoopsBoardPage() {
 
   const closeDialog = () => setDialog(null)
 
-  /** One-click convert when a due date exists; otherwise ask for a fire time. */
+  /** Any loop action in flight — cards disable their buttons while true. */
+  const actionPending = patchLoop.isPending || convert.isPending
+  /** Human-readable failure from the last mutation, for inline dialog errors. */
+  const mutationError =
+    (patchLoop.error instanceof Error ? patchLoop.error.message : null) ??
+    (convert.error instanceof Error ? convert.error.message : null)
+
+  /**
+   * One-click convert when a due date exists; otherwise ask for a fire time.
+   * Guarded: the confirm endpoint does no dedupe, so an in-flight conversion
+   * must never be re-triggered by a second click.
+   */
   const handleConvertClick = (loop: Loop) => {
+    if (convert.isPending) return
     if (loop.dueAt) convert.mutate({ loop })
     else setDialog({ type: 'convert', loop })
   }
@@ -109,6 +121,7 @@ export function LoopsBoardPage() {
         <KanbanBoard
           loops={visible}
           now={now}
+          busy={actionPending}
           onOpen={(loop) => setDialog({ type: 'edit', loop })}
           onConvert={handleConvertClick}
           onResolve={(loop) => setDialog({ type: 'resolve', loop })}
@@ -118,6 +131,7 @@ export function LoopsBoardPage() {
         <KindRows
           loops={visible}
           now={now}
+          busy={actionPending}
           onOpen={(loop) => setDialog({ type: 'edit', loop })}
           onConvert={handleConvertClick}
           onResolve={(loop) => setDialog({ type: 'resolve', loop })}
@@ -129,6 +143,7 @@ export function LoopsBoardPage() {
         <EditLoopDialog
           loop={dialog.loop}
           busy={patchLoop.isPending}
+          error={mutationError}
           onSave={(loop, patch) =>
             patchLoop.mutate(
               { id: loop.id, patch },
@@ -142,6 +157,7 @@ export function LoopsBoardPage() {
         <ResolveLoopDialog
           loop={dialog.loop}
           busy={patchLoop.isPending}
+          error={mutationError}
           onConfirm={(loop, evidenceId) =>
             patchLoop.mutate(
               {

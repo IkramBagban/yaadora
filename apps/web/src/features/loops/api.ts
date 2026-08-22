@@ -70,3 +70,10 @@ export function createReminderFromLoop(loop: {
     }),
   })
 }
+
+/** DELETE /reminders/:id — soft-cancel. Used to undo an orphaned conversion. */
+export function cancelReminder(id: string): Promise<{ id: string; status: string }> {
+  return request<{ id: string; status: string }>(`/reminders/${id}`, {
+    method: 'DELETE',
+  })
+}

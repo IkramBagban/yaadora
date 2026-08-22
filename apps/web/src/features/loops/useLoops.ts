@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createLoop, createReminderFromLoop, fetchLoops, patchLoop } from './api'
+import {
+  cancelReminder,
+  createLoop,
+  createReminderFromLoop,
+  fetchLoops,
+  patchLoop,
+} from './api'
 import type { CreateLoopInput, Loop, PatchLoopInput } from './types'
 
 export const loopKeys = {
@@ -89,6 +95,10 @@ export interface ConvertResult {
  * (`status: 'resolved'` — the closest terminal state the schema offers; see
  * track learnings). An explicit `dueAt` (from the convert dialog) overrides
  * the loop's own.
+ *
+ * The two calls are not atomic server-side; if the follow-up PATCH fails we
+ * soft-cancel the just-created reminder so a retry cannot duplicate it (the
+ * confirm endpoint does no dedupe).
  */
 export function useConvertToReminder() {
   const invalidate = useInvalidateLoops()
@@ -105,10 +115,18 @@ export function useConvertToReminder() {
         dueAt: dueAt !== undefined ? dueAt : loop.dueAt,
         sourceMemory: loop.sourceMemory,
       })
-      await patchLoop(loop.id, { status: 'resolved' })
+      try {
+        await patchLoop(loop.id, { status: 'resolved' })
+      } catch (err) {
+        // Compensate so state stays consistent for a clean retry. If even the
+        // cancel fails, surface the original error; invalidation will refetch.
+        await cancelReminder(reminder.id).catch(() => undefined)
+        throw err
+      }
       return { reminderId: reminder.id }
     },
     onSuccess: () => invalidate(),
+    onError: () => invalidate(),
   })
 }
 

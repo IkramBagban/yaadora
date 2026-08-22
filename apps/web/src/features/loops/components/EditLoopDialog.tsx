@@ -13,6 +13,8 @@ import {
 interface EditLoopDialogProps {
   loop: Loop
   busy: boolean
+  /** Persist failure message (from the patch mutation) shown inline. */
+  error?: string | null
   /** Persist only the fields the user actually changed. */
   onSave: (
     loop: Loop,
@@ -26,7 +28,7 @@ interface EditLoopDialogProps {
  * status. Title stays required; clearing the due date is explicit via the
  * "clear" checkbox.
  */
-export function EditLoopDialog({ loop, busy, onSave, onClose }: EditLoopDialogProps) {
+export function EditLoopDialog({ loop, busy, error, onSave, onClose }: EditLoopDialogProps) {
   const [title, setTitle] = useState(loop.title)
   const [titleError, setTitleError] = useState<string | null>(null)
   const [hasDue, setHasDue] = useState(loop.dueAt !== null)
@@ -114,6 +116,8 @@ export function EditLoopDialog({ loop, busy, onSave, onClose }: EditLoopDialogPr
             />
           )}
         </div>
+
+        {error && <p className="text-caption text-danger">{error}</p>}
 
         <div className="flex justify-end gap-sm">
           <Button variant="ghost" onClick={onClose}>

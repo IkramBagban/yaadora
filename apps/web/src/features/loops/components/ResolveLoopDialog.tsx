@@ -7,6 +7,8 @@ import { EvidencePicker } from './EvidencePicker'
 interface ResolveLoopDialogProps {
   loop: Loop
   busy: boolean
+  /** Persist failure message (from the patch mutation) shown inline. */
+  error?: string | null
   /** Persist the resolution; `evidence` names the closing memory when picked. */
   onConfirm: (loop: Loop, evidenceId: string | null) => void
   onClose: () => void
@@ -17,7 +19,13 @@ interface ResolveLoopDialogProps {
  * ("this memory closes it"). Resolving without evidence stays available for
  * manually planted loops that never had a source memory.
  */
-export function ResolveLoopDialog({ loop, busy, onConfirm, onClose }: ResolveLoopDialogProps) {
+export function ResolveLoopDialog({
+  loop,
+  busy,
+  error,
+  onConfirm,
+  onClose,
+}: ResolveLoopDialogProps) {
   const [evidence, setEvidence] = useState<EvidenceMemory | null>(null)
 
   return (
@@ -31,6 +39,8 @@ export function ResolveLoopDialog({ loop, busy, onConfirm, onClose }: ResolveLoo
       </p>
 
       <EvidencePicker value={evidence?.id ?? null} onChange={setEvidence} />
+
+      {error && <p className="mt-md text-caption text-danger">{error}</p>}
 
       <div className="mt-lg flex justify-end gap-sm">
         <Button variant="ghost" onClick={onClose}>

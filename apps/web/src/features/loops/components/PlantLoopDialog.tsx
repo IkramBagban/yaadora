@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { Button } from '../../../components/ui/Button'
 import { Input } from '../../../components/ui/Input'
-import { createLoop } from '../api'
-import { LOOP_KINDS, type PlantableKind } from '../types'
-import type { Loop } from '../types'
+import { LOOP_KINDS, type Loop, type PlantableKind } from '../types'
+import { useCreateLoop } from '../useLoops'
 import { Dialog } from './dialog'
 import { Field } from './form'
 import { fromDatetimeLocalValue } from '../loopUtils'
@@ -16,14 +15,15 @@ interface PlantLoopDialogProps {
 /**
  * L-5 manual planting: a goal/commitment the user adds themselves (not just
  * AI-detected ones). Provenance is the user's action server-side
- * (`sourceMemory` stays null). The board picks it up via list invalidation.
+ * (`sourceMemory` stays null). Goes through the invalidating mutation so the
+ * board picks the new loop up immediately.
  */
 export function PlantLoopDialog({ onClose, onPlanted }: PlantLoopDialogProps) {
+  const createLoop = useCreateLoop()
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState<PlantableKind>('goal')
   const [dueLocal, setDueLocal] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
 
   const submit = async () => {
     const trimmed = title.trim()
@@ -31,14 +31,12 @@ export function PlantLoopDialog({ onClose, onPlanted }: PlantLoopDialogProps) {
       setError('Title is required.')
       return
     }
-    setSubmitting(true)
     try {
       const dueAt = fromDatetimeLocalValue(dueLocal) ?? undefined
-      const loop = await createLoop({ title: trimmed, kind, dueAt })
+      const loop = await createLoop.mutateAsync({ title: trimmed, kind, dueAt })
       onPlanted(loop)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save this loop.')
-      setSubmitting(false)
     }
   }
 
@@ -93,8 +91,8 @@ export function PlantLoopDialog({ onClose, onPlanted }: PlantLoopDialogProps) {
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting ? 'Planting…' : 'Plant loop'}
+          <Button type="submit" disabled={createLoop.isPending}>
+            {createLoop.isPending ? 'Planting…' : 'Plant loop'}
           </Button>
         </div>
       </form>

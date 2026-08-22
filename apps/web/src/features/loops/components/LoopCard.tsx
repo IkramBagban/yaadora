@@ -22,6 +22,11 @@ interface LoopCardProps {
   /** Wired by the kanban column; rows view renders cards static. */
   draggable?: boolean
   isDragging?: boolean
+  /**
+   * True while any loop action is in flight — disables the card's action
+   * buttons so double-clicks cannot fire duplicate requests.
+   */
+  busy?: boolean
 }
 
 /**
@@ -36,6 +41,7 @@ export function LoopCard({
   onResolve,
   draggable = false,
   isDragging = false,
+  busy = false,
 }: LoopCardProps) {
   const meta = kindMeta(loop.kind)
   const KindIcon = meta.icon
@@ -100,10 +106,18 @@ export function LoopCard({
 
       {isOpen ? (
         <div className="mt-md flex items-center gap-xs opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          <CardAction label="Convert to reminder" onClick={() => onConvert(loop)}>
+          <CardAction
+            label="Convert to reminder"
+            onClick={() => onConvert(loop)}
+            disabled={busy}
+          >
             <Bell size={13} className="mr-1" /> Reminder
           </CardAction>
-          <CardAction label="Resolve this loop" onClick={() => onResolve(loop)}>
+          <CardAction
+            label="Resolve this loop"
+            onClick={() => onResolve(loop)}
+            disabled={busy}
+          >
             <CheckCircle2 size={13} className="mr-1" /> Resolve
           </CardAction>
         </div>
@@ -122,10 +136,12 @@ export function LoopCard({
 function CardAction({
   label,
   onClick,
+  disabled = false,
   children,
 }: {
   label: string
   onClick: () => void
+  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -133,11 +149,12 @@ function CardAction({
       type="button"
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={(event) => {
         event.stopPropagation()
-        onClick()
+        if (!disabled) onClick()
       }}
-      className="inline-flex items-center rounded-pill border border-hairline px-sm py-0.5 text-micro text-ink2 hover:border-accent hover:text-accent"
+      className="inline-flex items-center rounded-pill border border-hairline px-sm py-0.5 text-micro text-ink2 hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-50"
     >
       {children}
     </button>
