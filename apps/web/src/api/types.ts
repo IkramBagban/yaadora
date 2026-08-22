@@ -54,7 +54,12 @@ export interface ReminderList {
 export type ReminderScope = 'upcoming' | 'all' | 'suggested';
 
 /** Ingestion status of a raw memory ("pending" until the worker processes it). */
-export type IngestionStatus = 'pending' | 'processed' | 'failed' | (string & {});
+export type IngestionStatus =
+  | 'pending'
+  | 'processing'
+  | 'processed'
+  | 'failed'
+  | (string & {});
 
 export interface Memory {
   id: string;
@@ -64,6 +69,7 @@ export interface Memory {
   createdAt: string;
   source: MemorySource;
   status: IngestionStatus;
+  pinned: boolean;
 }
 
 /** POST /memories → 201 */
@@ -95,6 +101,40 @@ export interface Fact {
   createdAt: string;
 }
 
+/** GET /facts — admin listing row (routes/facts-admin.ts serialize()). */
+export interface AdminFact {
+  id: string;
+  subjectId: string | null;
+  subjectName: string | null;
+  objectId: string | null;
+  objectName: string | null;
+  predicate: string | null;
+  objectText: string | null;
+  factText: string;
+  confidence: number;
+  factType: string;
+  origin: string;
+  validFrom: string | null;
+  validTo: string | null;
+  /** newer fact that replaced this one; null on current heads */
+  supersededBy: string | null;
+  /** cross-flagged incompatible fact (conflicts inbox pairing) */
+  conflictsWith: string | null;
+  conflicted: boolean;
+  hidden: boolean;
+  conflictNote: string | null;
+  sourceMemory: string;
+  createdAt: string;
+}
+
+export type FactView = 'current' | 'history';
+
+/** GET /facts */
+export interface FactPage {
+  items: AdminFact[];
+  nextCursor: string | null;
+}
+
 export interface Entity {
   id: string;
   type: string;
@@ -106,11 +146,47 @@ export interface Entity {
   mentionCount: number | null;
 }
 
+/** An open loop spawned by a capture (GET /memories/:id). */
+export interface MemoryLoop {
+  id: string;
+  kind: string;
+  title: string;
+  entityId: string | null;
+  dueAt: string | null;
+  status: string;
+  sourceMemory: string | null;
+  createdAt: string;
+}
+
+/** A reminder spawned by a capture (GET /memories/:id). */
+export interface MemoryReminder {
+  id: string;
+  text: string;
+  dueAt: string | null;
+  status: ReminderStatus;
+  origin: ReminderOrigin;
+  sourceMemory: string | null;
+  createdAt: string;
+}
+
+/** A standing rule spawned by a capture (GET /memories/:id). */
+export interface MemoryRule {
+  id: string;
+  ruleText: string;
+  triggerText: string | null;
+  active: boolean;
+  sourceMemory: string | null;
+  createdAt: string;
+}
+
 /** GET /memories/:id */
 export interface MemoryDetail {
   memory: Memory;
   facts: Fact[];
   entities: Entity[];
+  openLoops: MemoryLoop[];
+  reminders: MemoryReminder[];
+  rules: MemoryRule[];
 }
 
 export interface Citation {
@@ -298,4 +374,87 @@ export interface EntityListItem {
   profile: string | null;
   mentionCount: number;
   lastSeen: string | null;
+}
+
+// --- memory search (GET /memories/search) -----------------------------------
+
+/** Recall channels that contributed to a fused search result. */
+export type SearchChannel = 'vector' | 'lexical' | 'graph' | 'temporal' | (string & {});
+
+/** A memory hit from hybrid search. */
+export interface MemorySearchItem extends Memory {
+  salience: number;
+  score: number;
+  channels: SearchChannel[];
+}
+
+/** A fact hit from hybrid search. */
+export interface FactSearchItem extends Fact {
+  score: number;
+  channels: SearchChannel[];
+}
+
+/** GET /memories/search?q= */
+export interface MemorySearchResponse {
+  query: string;
+  memories: MemorySearchItem[];
+  facts: FactSearchItem[];
+}
+
+// --- overview dashboard (spec 03 §8: web-facing aggregates) -----------------
+
+/** GET /stats/overview */
+export interface StatsOverview {
+  memories: { total: number; byStatus: Record<string, number> };
+  facts: { currentCount: number; supersededCount: number; conflictedCount: number };
+  entities: { total: number; byType: Record<string, number> };
+  openLoops: { total: number; byStatus: Record<string, number> };
+  rules: { active: number };
+  reminders: { pending: number; suggested: number };
+}
+
+export type StatsBucket = 'day' | 'week' | 'month';
+
+/** One timeseries bucket; `bucketStart` is the ISO (UTC) bucket start. */
+export interface TimeseriesPoint {
+  bucketStart: string;
+  total: number;
+  bySource: Record<string, number>;
+}
+
+/** GET /stats/timeseries */
+export interface TimeseriesResponse {
+  days: number;
+  bucket: StatsBucket;
+  points: TimeseriesPoint[];
+}
+
+/** GET /digests — rebuildable summaries written nightly by consolidation. */
+export interface DigestEntry {
+  kind: string; // 'profile' | 'week'
+  content: string;
+  updatedAt: string;
+}
+
+export interface DigestList {
+  digests: DigestEntry[];
+}
+
+/** GET /open-loops — server-serialized AdminOpenLoop (dates as ISO strings). */
+export interface OpenLoopItem {
+  id: string;
+  kind: string;
+  title: string;
+  entityId: string | null;
+  entityName: string | null;
+  dueAt: string | null;
+  status: string;
+  resolvedBy: string | null;
+  sourceMemory: string | null;
+  createdAt: string;
+  lastSurfacedAt: string | null;
+}
+
+export interface OpenLoopList {
+  items: OpenLoopItem[];
 }

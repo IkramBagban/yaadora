@@ -1,5 +1,29 @@
-/** Tiny date/number formatters shared by the Ask page. No date library. */
+const dateTimeFmt = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
 
+const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
+
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : dateTimeFmt.format(d)
+}
+
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return 'unknown'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? 'unknown' : dateFmt.format(d)
+}
+
+/** 0..1 → "72%" (confidence display; null treated as unknown). */
+export function formatPercent(value: number | null | undefined): string {
+  if (value == null) return '—'
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+}
+
+/** Compact relative time for list rows ("just now", "3h ago", "Aug 12"). */
 export function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return ''
@@ -14,19 +38,6 @@ export function formatRelativeTime(iso: string): string {
   return new Date(then).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
-  })
-}
-
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
   })
 }
 
