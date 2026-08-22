@@ -138,7 +138,9 @@ const PatchBody = z
     dueAt: z.string().datetime({ offset: true }).nullable().optional(),
     title: z.string().trim().min(1).max(500).optional(),
     // Evidence resolve ("this memory closes it"); null to clear. Must be one
-    // of the caller's own memories (checked below).
+    // of the caller's own memories (checked below). Invariant: a status move
+    // away from 'resolved' clears resolvedBy unless an explicit value rides
+    // along in the same PATCH.
     resolvedBy: z.string().uuid().nullable().optional(),
   })
   .refine(

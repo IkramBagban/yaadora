@@ -123,7 +123,13 @@ export async function patchOpenLoop(
   if (patch.status !== undefined) set.status = patch.status;
   if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
   if (patch.title !== undefined) set.title = patch.title;
-  if (patch.resolvedBy !== undefined) set.resolvedBy = patch.resolvedBy;
+  if (patch.resolvedBy !== undefined) {
+    set.resolvedBy = patch.resolvedBy;
+  } else if (patch.status !== undefined && patch.status !== "resolved") {
+    // Leaving the resolved state (reopen / expire) invalidates the old
+    // closing evidence — clear it instead of keeping stale provenance.
+    set.resolvedBy = null;
+  }
   if (Object.keys(set).length === 0) return null;
 
   const [updated] = await db
