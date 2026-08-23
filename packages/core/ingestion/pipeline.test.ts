@@ -61,6 +61,8 @@ beforeAll(() => {
     toVectorLiteral: (embedding: number[]) => `[${embedding.join(",")}]`,
     findEntityCandidates: async () => [],
     findSupersessionCandidates: async () => [],
+    // Usage instrumentation (issue #30) — imported by ai/prod-usage via models.
+    upsertAiUsageDaily: async () => undefined,
   }));
 
   const extractionMod = require("./extraction");
