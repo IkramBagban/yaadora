@@ -1,4 +1,9 @@
-import { useMutation, useQuery, type UseQueryResult } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  type UseQueryResult,
+} from '@tanstack/react-query'
 import { request } from '../../api/client'
 import type {
   AdminConversationsPayload,
@@ -148,10 +153,13 @@ export function useIsAdmin(): boolean {
   return useMe().isAdmin
 }
 
+/** Cursor-paginated users list; `query` is the debounced search term. */
 export function useAdminUsers(query: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: adminKeys.users(query),
-    queryFn: () => fetchAdminUsers(query),
+    queryFn: ({ pageParam }) => fetchAdminUsers(query, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     staleTime: STALE,
     placeholderData: (prev) => prev,
   })
@@ -165,10 +173,13 @@ export function useAdminUser(userId: string) {
   })
 }
 
+/** Cursor-paginated records list for the user detail Records tab. */
 export function useAdminUserMemories(userId: string, status: MemoryStatusFilter) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: adminKeys.memories(userId, status),
-    queryFn: () => fetchAdminUserMemories(userId, status),
+    queryFn: ({ pageParam }) => fetchAdminUserMemories(userId, status, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     staleTime: STALE,
     placeholderData: (prev) => prev,
   })

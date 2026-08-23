@@ -1,6 +1,8 @@
 import { Link } from '@tanstack/react-router'
+import { ShieldCheck } from 'lucide-react'
 import { navItems, settingsNavItem } from './navItems'
 import { cn } from '../../lib/cn'
+import { useIsAdmin } from '../../features/admin/api'
 
 interface SidebarProps {
   onNavigate?: () => void
@@ -10,6 +12,10 @@ const linkClasses =
   'flex items-center gap-sm rounded-md px-md py-sm text-sub text-ink2 transition-colors hover:bg-surface-alt hover:text-ink data-[status=active]:bg-accent-soft data-[status=active]:text-accent'
 
 export function Sidebar({ onNavigate }: SidebarProps) {
+  // Additive role-gated entry: the Admin section link only appears once
+  // GET /me has confirmed `role === 'admin'` — hidden for everyone else.
+  const isAdmin = useIsAdmin()
+
   return (
     <nav aria-label="Primary" className="flex h-full w-60 flex-col border-r border-hairline bg-surface">
       <div className="flex h-14 shrink-0 items-center gap-sm border-b border-hairline px-lg">
@@ -27,6 +33,12 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         ))}
       </ul>
       <div className="border-t border-hairline p-sm">
+        {isAdmin ? (
+          <Link to="/admin" onClick={onNavigate} className={linkClasses}>
+            <ShieldCheck size={16} strokeWidth={2} />
+            Admin
+          </Link>
+        ) : null}
         <Link to={settingsNavItem.to} onClick={onNavigate} className={linkClasses}>
           <settingsNavItem.icon size={16} strokeWidth={2} />
           {settingsNavItem.label}

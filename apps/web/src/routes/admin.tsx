@@ -1,9 +1,9 @@
 import { createFileRoute, Link, Outlet } from '@tanstack/react-router'
 import { Gauge, HeartPulse, TrendingUp, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { AdminOnlyNotice, GateShell, tabLinkClasses } from '../features/admin/ui'
+import { AdminOnlyNotice, GateShell } from '../features/admin/ui'
+import { isForbidden, tabLinkClasses } from '../features/admin/lib'
 import { useMe } from '../features/admin/api'
-import { isForbidden } from '../features/admin/lib'
 
 /**
  * /admin section shell: sidebar-tab navigation (Overview · Users · Activity &

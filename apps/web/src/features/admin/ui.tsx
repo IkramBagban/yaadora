@@ -41,6 +41,8 @@ interface PanelProps {
   title?: string
   description?: string
   action?: ReactNode
+  /** Extra node under the header title (kpi row etc.) — hidden while loading/error. */
+  headerExtra?: ReactNode
   loading?: boolean
   error?: unknown
   onRetry?: () => void
@@ -57,6 +59,7 @@ export function Panel({
   title,
   description,
   action,
+  headerExtra,
   loading = false,
   error,
   onRetry,
@@ -75,6 +78,9 @@ export function Panel({
             {title ? <h2 className="text-sub font-semibold">{title}</h2> : null}
             {description && !loading && !error ? (
               <p className="mt-0.5 text-caption text-ink2">{description}</p>
+            ) : null}
+            {headerExtra && !loading && !error ? (
+              <div className="mt-sm">{headerExtra}</div>
             ) : null}
           </div>
           {action}
@@ -196,7 +202,7 @@ export function TabBar({
   onSelect,
   ariaLabel,
 }: {
-  items: TabItem[]
+  items: readonly TabItem[]
   active: string
   onSelect: (id: string) => void
   ariaLabel: string
@@ -221,20 +227,6 @@ export function TabBar({
         </button>
       ))}
     </div>
-  )
-}
-
-export function ThRow({ children }: { children: ReactNode }) {
-  return (
-    <tr>
-      {Array.isArray(children)
-        ? children.map((c, i) => (
-            <th key={i} className={thClasses}>
-              {c}
-            </th>
-          ))
-        : children}
-    </tr>
   )
 }
 
