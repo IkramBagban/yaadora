@@ -108,7 +108,7 @@ export async function listAdminUsers(
     memoriesTotal: Number(r.memories_total ?? 0),
     conversationsTotal: Number(r.conversations_total ?? 0),
     hasFailedMemories: Boolean(r.has_failed_memories),
-    insightsDisabled: !Boolean(r.insights_enabled),
+    insightsDisabled: !r.insights_enabled,
   }));
 }
 
@@ -130,7 +130,7 @@ export async function getAiUsageByModelSince(
            sum(input_tokens)::int  AS input_tokens,
            sum(output_tokens)::int AS output_tokens
     FROM ai_usage_daily
-    WHERE day > current_date - ${days}
+    WHERE day > current_date - ${days}::int
       AND user_id IN (${sql.join(userIds.map((id) => sql`${id}::uuid`), sql`, `)})
     GROUP BY user_id, model
   `);

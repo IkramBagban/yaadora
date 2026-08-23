@@ -37,7 +37,7 @@ export async function getAdminUserActivity(
       SELECT day::text AS day,
              requests, memories_created, turns
       FROM user_activity_days
-      WHERE user_id = ${userId}::uuid AND day > current_date - ${days}
+      WHERE user_id = ${userId}::uuid AND day > current_date - ${days}::int
       ORDER BY day ASC`),
     db.execute(sql`
       SELECT ts, method, path, status, duration_ms
@@ -156,13 +156,13 @@ export async function getGlobalActivity(params: {
     db.execute(sql`
       SELECT day::text AS day, count(DISTINCT user_id)::int AS count
       FROM user_activity_days
-      WHERE day > current_date - ${days}
+      WHERE day > current_date - ${days}::int
       GROUP BY day ORDER BY day ASC`),
     db.execute(sql`
       SELECT to_char(date_trunc('week', day::timestamp), 'YYYY-MM-DD') AS day,
              count(DISTINCT user_id)::int AS count
       FROM user_activity_days
-      WHERE day > current_date - ${days}
+      WHERE day > current_date - ${days}::int
       GROUP BY 1 ORDER BY 1 ASC`),
     db.execute(sql`
       WITH islands AS (

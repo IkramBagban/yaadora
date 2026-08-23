@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { badRequest, notFound } from "../../http";
+import { notFound } from "../../http";
 
 /**
  * Shared admin-route helpers (issue #31): opaque keyset cursors + uuid path
@@ -43,7 +43,9 @@ export function requireUuidParam(
 
 /** Clamp + floor pagination limits coming from query params. */
 export function parseLimit(raw: string | null, fallback: number): number {
-  const n = Number(raw ?? "");
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(100, Math.max(1, Math.floor(n)));
+  // NB: Number("") is 0, not NaN — treat empty/absent as "use the default".
+  if (raw == null || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(100, Math.floor(n));
 }
