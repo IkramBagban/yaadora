@@ -15,6 +15,16 @@ export {
 // The eval Redis tracker (ai/usage-tracker.ts) stays internal/untouched.
 export { recordProdUsage } from "./ai/prod-usage";
 export type { ProdUsageInput } from "./ai/prod-usage";
+// Admin cost estimation (issue #31) — price map + estimator over ai_usage_daily.
+export {
+  MODEL_PRICES,
+  bareModelId,
+  estimateCost,
+  estimateUsageCostUsd,
+  findUnknownModels,
+  lookupModelPrice,
+} from "./ai/prices";
+export type { ModelPrice, UsageCostEntry } from "./ai/prices";
 export {
   bindRequestUser,
   enterUsagePhase,

@@ -25,12 +25,15 @@ function serializeUser(row: {
   email: string;
   timezone: string;
   createdAt: Date;
+  role: string;
 }) {
   return {
     id: row.id,
     email: row.email,
     timezone: row.timezone,
     createdAt: row.createdAt.toISOString(),
+    // Admin gate for the web panel (issue #31); absent/other → non-admin.
+    role: row.role,
   };
 }
 

@@ -66,6 +66,23 @@ import { listDigests } from "./routes/digests";
 import { postEntitiesMerge } from "./routes/entities-merge";
 import { getSurfacingsSummaryRoute } from "./routes/surfacings-summary";
 import { testRuleRoute } from "./routes/rules-test";
+// Admin API surface (issue #31) — role-guarded, powers the admin panel (#32).
+import { listAdminUsersRoute } from "./routes/admin/users";
+import {
+  getAdminUserDetailRoute,
+  listAdminMemoriesRoute,
+  postReprocessMemoryRoute,
+} from "./routes/admin/user-detail";
+import {
+  getAdminConversationTurnsRoute,
+  listAdminConversationsRoute,
+} from "./routes/admin/ask";
+import { getAdminUserActivityRoute } from "./routes/admin/activity";
+import { getAdminUserUsageRoute } from "./routes/admin/usage";
+import {
+  getEngineHealthRoute,
+  getGlobalActivityRoute,
+} from "./routes/admin/global";
 
 // Declare this process's log target FIRST — every log line (including those
 // emitted deep inside @repo/core) is written to logs/server.log in development.
@@ -230,6 +247,40 @@ const routeTable: Record<string, Record<string, Handler>> = {
   "/reminders/:id": {
     PATCH: (req) => updateReminder(req, req.params.id!),
     DELETE: (req) => cancelReminder(req, req.params.id!),
+  },
+  // Admin panel API (issue #31). Static segments win over :params in Bun's
+  // router, so /admin/activity and /admin/engine are safe alongside the
+  // /admin/users/:id/... subtree. Every handler is requireAdmin-guarded and
+  // reads its uuid params from req.params itself.
+  "/admin/users": {
+    GET: (req) => listAdminUsersRoute(req),
+  },
+  "/admin/users/:id": {
+    GET: (req) => getAdminUserDetailRoute(req),
+  },
+  "/admin/users/:id/memories": {
+    GET: (req) => listAdminMemoriesRoute(req),
+  },
+  "/admin/users/:id/memories/:memoryId/reprocess": {
+    POST: (req) => postReprocessMemoryRoute(req),
+  },
+  "/admin/users/:id/conversations": {
+    GET: (req) => listAdminConversationsRoute(req),
+  },
+  "/admin/users/:id/conversations/:cid/turns": {
+    GET: (req) => getAdminConversationTurnsRoute(req),
+  },
+  "/admin/users/:id/activity": {
+    GET: (req) => getAdminUserActivityRoute(req),
+  },
+  "/admin/users/:id/usage": {
+    GET: (req) => getAdminUserUsageRoute(req),
+  },
+  "/admin/activity": {
+    GET: (req) => getGlobalActivityRoute(req),
+  },
+  "/admin/engine": {
+    GET: (req) => getEngineHealthRoute(req),
   },
 };
 

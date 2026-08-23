@@ -134,6 +134,7 @@ export async function getUserById(userId: string) {
       email: users.email,
       timezone: users.timezone,
       createdAt: users.createdAt,
+      role: users.role,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -149,6 +150,7 @@ export async function updateUserTimezone(
   email: string;
   timezone: string;
   createdAt: Date;
+  role: "user" | "admin";
 } | null> {
   const [row] = await db
     .update(users)
@@ -159,6 +161,7 @@ export async function updateUserTimezone(
       email: users.email,
       timezone: users.timezone,
       createdAt: users.createdAt,
+      role: users.role,
     });
   return row ?? null;
 }

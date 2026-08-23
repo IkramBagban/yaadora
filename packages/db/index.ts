@@ -47,6 +47,25 @@ export {
 export type {
   FinishConsolidationRunInput,
 } from "./queries/consolidation-runs";
+// Admin API surface (issue #31) — dedicated modules (never append to queries.ts).
+export {
+  getAiUsageByModelSince,
+  getAdminUserDetail,
+  listAdminUsers,
+} from "./queries/admin-users";
+export {
+  getAdminConversationTurns,
+  getAdminMemoryForUser,
+  listAdminConversations,
+  listAdminMemories,
+} from "./queries/admin-content";
+export {
+  getAdminUsageCells,
+  getAdminUserActivity,
+  getEngineHealthData,
+  getGlobalActivity,
+} from "./queries/admin-analytics";
+export type { UsageGranularity } from "./queries/admin-analytics";
 // Type-only re-exports: the named value re-exports above do not carry the
 // interface/type declarations that cross-package consumers import (NewFact,
 // RetrievedMemory, LinkableEntity, CommitmentLoopCandidate, …). These bring the
