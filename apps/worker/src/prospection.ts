@@ -7,6 +7,7 @@ import {
   localDateString,
   localMinutesOfDay,
   retargetSurfacingChannel,
+  runWithUsageContext,
   scanProspectionCandidates,
   sendExpoPush,
   userHadConversationToday,
@@ -131,11 +132,28 @@ async function deliverPush(params: {
 
 /**
  * Run prospection for a single user (gates + deliver). Exported for tests.
+ * The awareness/gate/push-copy LLM calls inside attribute to this user in
+ * ai_usage_daily via the usage context (issue #30).
  */
 export async function runProspectionForUser(params: {
   userId: string;
   now?: Date;
   /** When true, skip the local-time window + once-per-day marker (tests). */
+  force?: boolean;
+}): Promise<{
+  candidates: number;
+  delivered: number;
+  suppressed: number;
+  skipped: string | null;
+}> {
+  return runWithUsageContext({ userId: params.userId }, () =>
+    runProspectionForUserInner(params),
+  );
+}
+
+async function runProspectionForUserInner(params: {
+  userId: string;
+  now?: Date;
   force?: boolean;
 }): Promise<{
   candidates: number;

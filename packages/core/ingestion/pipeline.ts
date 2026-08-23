@@ -5,6 +5,7 @@ import { linkExtractedEntities, type EntityResolution } from "./linking";
 import { upsertOpenLoops, resolveOpenLoop } from "./loops";
 import { loadIngestionContext, finalizeMemory } from "./memory-record";
 import { maybeSuggestReminder } from "./reminders";
+import { runWithUsageContext } from "../request-context";
 import { upsertStandingRule } from "./rules";
 import { parseDate } from "./temporal";
 
@@ -88,59 +89,68 @@ export async function runIngestion(memoryId: string): Promise<void> {
   if (!context) return; // the row was deleted — not an error worth retrying
   const { memory, timezone } = context;
 
-  // 2. Single structured-extraction call
-  const extraction: Extraction = await extract({
-    rawText: memory.rawText,
-    createdAt: memory.createdAt,
-    timezone,
-  });
+  // Attribution (issue #30): the queue payload carries only memoryId, so the
+  // owner resolved here binds EVERY LLM call in steps 2–7 to the user via the
+  // ambient usage context (phase "ingest" → ai_usage_daily rollups).
+  return runWithUsageContext(
+    { userId: memory.userId, phase: "ingest" },
+    async () => {
+      // 2. Single structured-extraction call
+      const extraction: Extraction = await extract({
+        rawText: memory.rawText,
+        createdAt: memory.createdAt,
+        timezone,
+      });
 
-  // 3. Temporal resolution — resolved event time for the memory.
-   const occurredAt = parseDate(extraction.occurredAt) ?? memory.occurredAt ?? null;
+      // 3. Temporal resolution — resolved event time for the memory.
+      const occurredAt =
+        parseDate(extraction.occurredAt) ?? memory.occurredAt ?? null;
 
-  // 4. Multi-representation embeddings, batched into ONE embedMany call.
-  const embeddings = await embedExtraction(memory.rawText, extraction);
+      // 4. Multi-representation embeddings, batched into ONE embedMany call.
+      const embeddings = await embedExtraction(memory.rawText, extraction);
 
-  // 5. Entity extraction + linking (§2.3).
-  const resolution = await linkExtractedEntities({
-    userId: memory.userId,
-    memoryId,
-    entities: extraction.entities, // i.e [{ surface: "Alice", type: "person", canonicalGuess: "Alice"}, ...]
-    embeddings: embeddings.mentions,
-    occurredAt,
-    memoryText: memory.rawText,
-  });
+      // 5. Entity extraction + linking (§2.3).
+      const resolution = await linkExtractedEntities({
+        userId: memory.userId,
+        memoryId,
+        entities: extraction.entities, // i.e [{ surface: "Alice", type: "person", canonicalGuess: "Alice"}, ...]
+        embeddings: embeddings.mentions,
+        occurredAt,
+        memoryText: memory.rawText,
+      });
 
-  // 6. Atomic fact insert (§2.4), each fact reconciled against history first (§2.5).
-  await insertExtractedFacts({
-    userId: memory.userId,
-    memoryId,
-    facts: extraction.facts,
-    embeddings: embeddings.facts,
-    resolution,
-    occurredAt,
-  });
+      // 6. Atomic fact insert (§2.4), each fact reconciled against history first (§2.5).
+      await insertExtractedFacts({
+        userId: memory.userId,
+        memoryId,
+        facts: extraction.facts,
+        embeddings: embeddings.facts,
+        resolution,
+        occurredAt,
+      });
 
-  // 6b. Procedural rules and unfinished loops, derived after reconciliation.
-  await deriveRulesAndLoops({
-    userId: memory.userId,
-    memoryId,
-    extraction,
-    resolution,
-    embeddings,
-  });
+      // 6b. Procedural rules and unfinished loops, derived after reconciliation.
+      await deriveRulesAndLoops({
+        userId: memory.userId,
+        memoryId,
+        extraction,
+        resolution,
+        embeddings,
+      });
 
-  // 6c. Prospective intent OR a future-dated event → a suggested reminder the
-  //     user can confirm/dismiss.
-  await maybeSuggestReminder({
-    userId: memory.userId,
-    memoryId,
-    intent: extraction.intent,
-    occurredAt,
-    memoryText: memory.rawText,
-    now: new Date(),
-  });
+      // 6c. Prospective intent OR a future-dated event → a suggested reminder the
+      //     user can confirm/dismiss.
+      await maybeSuggestReminder({
+        userId: memory.userId,
+        memoryId,
+        intent: extraction.intent,
+        occurredAt,
+        memoryText: memory.rawText,
+        now: new Date(),
+      });
 
-  // 7. Finalize: set the memory embedding + resolved occurredAt + processed.
-  await finalizeMemory({ memoryId, embedding: embeddings.raw, occurredAt });
+      // 7. Finalize: set the memory embedding + resolved occurredAt + processed.
+      await finalizeMemory({ memoryId, embedding: embeddings.raw, occurredAt });
+    },
+  );
 }

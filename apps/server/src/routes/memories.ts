@@ -9,6 +9,7 @@ import {
   openLoops,
   reminders,
   rules,
+  recordCaptureActivity,
   eq,
   and,
   lt,
@@ -177,6 +178,10 @@ export async function createMemory(req: Request): Promise<Response> {
   await enqueueIngestion(created.id);
 
   if (body.clientId) await idemStore(userId, body.clientId, created.id);
+
+  // Activity counter (issue #30): memories_created + per-source tally.
+  // Fire-and-forget — capture latency is sacred here.
+  void recordCaptureActivity(userId, body.source).catch(() => undefined);
 
   log.info("memory captured", {
     userId,

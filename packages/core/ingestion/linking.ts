@@ -8,7 +8,7 @@ import {
   sql,
   eq,
 } from "@repo/db";
-import { ingestionModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, ingestionModel } from "../ai/models";
 import type { Extraction } from "./extraction";
 
 /**
@@ -135,6 +135,7 @@ async function disambiguate(
     const { object } = await generateObject({
       model: ingestionModel, // tiny, rare call — keep it on the cheap tier (cost discipline)
       schema: DisambiguationSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "Pick which existing entity a mention refers to, or decide it is new. " +
         "Return a JSON object {\"entityId\": \"...\"} with the exact entityId of the best match, " +

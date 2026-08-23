@@ -3,7 +3,9 @@ import { generateText } from "ai";
 import {
   captureFromConversation,
   createRedisConnection,
+  EXPERIMENTAL_TELEMETRY,
   ingestionModel,
+  runWithUsageContext,
 } from "@repo/core";
 import {
   db,
@@ -74,6 +76,7 @@ async function generateConversationSummary(
   try {
     const { text } = await generateText({
       model: ingestionModel,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You summarise personal assistant conversations for long-term memory. Write 2–5 sentences in third person about the user: topics discussed, facts stated, decisions, plans. No bullet lists. Omit chit-chat. If nothing substantive, return a single short sentence.",
       prompt: `Summarise this conversation:\n\n${clipped}`,
@@ -221,7 +224,11 @@ async function runIdleSweep(): Promise<number> {
   let processed = 0;
   for (const convo of idleCandidates) {
     try {
-      await processIdleConversation(convo);
+      // Attribution (issue #30): the summary + capture LLM calls inside roll
+      // up to this conversation's owner in ai_usage_daily.
+      await runWithUsageContext({ userId: convo.userId }, () =>
+        processIdleConversation(convo),
+      );
       processed++;
     } catch (err) {
       log.error("idle process failed", {

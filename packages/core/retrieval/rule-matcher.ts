@@ -9,7 +9,7 @@ import {
   toVectorLiteral,
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
-import { embedText, fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, embedText, fastModel } from "../ai/models";
 
 const log = createLogger("retrieval:rule-matcher");
 
@@ -208,6 +208,7 @@ async function confirmRuleSituations(params: {
   const { object } = await generateObject({
     model: fastModel,
     schema: ConfirmSchema,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system:
       "You gate standing rules for a personal second-brain agent. A rule applies " +
       "ONLY when the user is currently doing (or asking for help with) the " +

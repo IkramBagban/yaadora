@@ -15,7 +15,7 @@ import {
   findNearbyPendingReminders,
 } from "@repo/db";
 import { createLogger } from "@repo/logger";
-import { reasoningModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, reasoningModel } from "../ai/models";
 import { retrieveMemories } from "./search";
 import { REFUSAL_TEXT, type Citation } from "./answer";
 import {
@@ -1126,6 +1126,7 @@ export async function answerQuestion(params: {
 
   const stream = streamText({
     model: reasoningModel,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system: systemPrompt(now, timezone, contextPackText),
     messages,
     tools,

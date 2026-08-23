@@ -1,6 +1,6 @@
 import { streamText } from "ai";
 import type { EntityProfile, RetrievedMemory } from "@repo/db";
-import { reasoningModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, reasoningModel } from "../ai/models";
 import type { RerankedCandidate } from "./rerank";
 
 /**
@@ -118,6 +118,7 @@ export function streamGroundedAnswer(params: {
 }): { textStream: AsyncIterable<string> } {
   const result = streamText({
     model: reasoningModel,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system: SYSTEM_PROMPT,
     prompt: `Retrieved context:
 ${params.context}

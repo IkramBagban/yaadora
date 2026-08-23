@@ -344,6 +344,14 @@ export const ingestionModel = buildTierModel("ingestion");
 export const reasoningModel = buildTierModel("reasoning");
 export const fastModel = buildTierModel("fast");
 
+/**
+ * Vercel AI SDK experimental telemetry (issue #30). The SDK only accepts this
+ * per generation/embed call — never on the model itself — so every call site
+ * spreads this constant. With no OpenTelemetry integration registered it is a
+ * near-no-op; when one exists, spans carry inputs/outputs/token counts.
+ */
+export const EXPERIMENTAL_TELEMETRY = { isEnabled: true } as const;
+
 export const EMBEDDING_PROVIDER = (process.env.EMBEDDING_PROVIDER ??
   "openai") as "openai" | "google";
 
@@ -380,6 +388,7 @@ export async function embedText(value: string): Promise<{ embedding: number[] }>
     model: embeddingModel,
     value,
     providerOptions: embeddingProviderOptions,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
   });
 
   log.debug("Embedding Response", { latencyMs: Date.now() - startTime });
@@ -401,6 +410,7 @@ export async function embedTexts(
     model: embeddingModel,
     values,
     providerOptions: embeddingProviderOptions,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
   });
 
   log.debug("Embedding Response", { latencyMs: Date.now() - startTime });

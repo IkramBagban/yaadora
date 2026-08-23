@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { findCommitmentLoopCandidates } from "@repo/db";
 import { createLogger } from "@repo/logger";
-import { embedText, fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, embedText, fastModel } from "../ai/models";
 import type { AwarenessAttachment } from "./awareness";
 
 const log = createLogger("proactive:intention");
@@ -142,6 +142,7 @@ async function confirmTension(params: {
   const { object } = await generateObject({
     model: fastModel,
     schema: ContradictionSchema,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system: CONFIRM_SYSTEM,
     prompt: `Earlier commitment (what the user intended):
 """

@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 import { createLogger } from "@repo/logger";
-import { fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, fastModel } from "../ai/models";
 
 const log = createLogger("proactive:push");
 
@@ -28,6 +28,7 @@ export async function generatePushCopy(params: {
 
     const { text } = await generateText({
       model: fastModel,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You write ONE-line push notification copy for a personal second brain. Plain and concrete. No cliffhangers, no clickbait, no emoji spam. Max 120 characters. Output only the line.",
       prompt: `Nudge intent: ${params.oneLineNudge}${evidence}\n\nWrite the push line:`,

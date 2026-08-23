@@ -15,3 +15,5 @@ export * from "./surfacings";
 export * from "./entity-edges";
 export * from "./digests";
 export * from "./push-tokens";
+// Usage instrumentation (issue #30) — per-user tracking foundation.
+export * from "./instrumentation";

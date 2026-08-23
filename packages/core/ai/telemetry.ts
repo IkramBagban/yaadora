@@ -1,6 +1,7 @@
 import { type LanguageModelMiddleware } from "ai";
 import { createLogger } from "@repo/logger";
 import { parseUsage, recordUsageEvent } from "./usage-tracker";
+import { recordProdUsage } from "./prod-usage";
 
 const log = createLogger("ai");
 
@@ -11,7 +12,9 @@ export interface LoggerMiddlewareOptions {
 
 /**
  * Middleware to intercept and log all interactions with the Vercel AI SDK language models.
- * Logs latency and records token usage into the shared Redis tracker (for eval).
+ * Logs latency and records token usage into the shared Redis tracker (for eval)
+ * AND the per-user prod rollup `ai_usage_daily` (issue #30) when a user is
+ * attributed via the request/job context. Both writes are fire-and-forget.
  */
 export function createLoggerMiddleware(
   modelId: string,
@@ -50,6 +53,13 @@ export function createLoggerMiddleware(
           tier,
           operation: "generate",
           ...usage,
+          latencyMs,
+        });
+        void recordProdUsage({
+          model: modelId,
+          tier,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
           latencyMs,
         });
 
@@ -104,6 +114,13 @@ export function createLoggerMiddleware(
                   tier,
                   operation: "stream",
                   ...usage,
+                  latencyMs,
+                });
+                void recordProdUsage({
+                  model: modelId,
+                  tier,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
                   latencyMs,
                 });
               }

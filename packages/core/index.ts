@@ -7,8 +7,24 @@ export {
   AI_PROVIDER,
   // Text embedding entrypoint (rules test endpoint embeds probe text).
   embedText,
+  EXPERIMENTAL_TELEMETRY,
 } from "./ai/models";
 // fastModel stays internal to core (awareness / matcher / push copy).
+
+// Per-user usage attribution (issue #30): ALS context + prod rollup writer.
+// The eval Redis tracker (ai/usage-tracker.ts) stays internal/untouched.
+export { recordProdUsage } from "./ai/prod-usage";
+export type { ProdUsageInput } from "./ai/prod-usage";
+export {
+  bindRequestUser,
+  enterUsagePhase,
+  getRequestUserId,
+  getUsagePhase,
+  runInRequestContext,
+  runWithUsageContext,
+  runWithUser,
+} from "./request-context";
+export type { UsageContextStore, UsagePhase } from "./request-context";
 
 // The BullMQ queue contract (spec 01 §2) — enqueue on the server, process on
 // the worker. Shared here so producer/consumer can't drift.

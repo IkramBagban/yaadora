@@ -49,6 +49,7 @@ import { getMe, patchMe } from "./routes/me";
 import { transcribe } from "./routes/transcribe";
 // Backend-gaps wave (web app support).
 import { preflight, withCors } from "./cors";
+import { instrumented } from "./instrumentation";
 import { getGraphSnapshotRoute } from "./routes/graph";
 import {
   getStatsOverviewRoute,
@@ -99,8 +100,11 @@ function corsify(
     out[path] = Object.fromEntries(
       Object.entries(methods).map(([method, handler]) => [
         method,
+        // instrumented (issue #30): usage context + api_requests/activity
+        // rollups after the response; withCors stays outermost so headers are
+        // always attached.
         async (req: Request & { params: Record<string, string> }) =>
-          withCors(req, await handler(req)),
+          withCors(req, await instrumented(handler)(req)),
       ]),
     );
   }

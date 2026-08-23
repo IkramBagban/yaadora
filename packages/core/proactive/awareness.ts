@@ -1,7 +1,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { createLogger } from "@repo/logger";
-import { fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, fastModel } from "../ai/models";
 import {
   hardBlockMidTask,
   type NudgeCandidate,
@@ -156,6 +156,7 @@ export async function runAwarenessModel(
   const { object } = await generateObject({
     model: fastModel,
     schema: AwarenessSchema,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system:
       "You are the awareness sidecar for a personal second brain. You decide whether ONE small, evidence-backed nudge fits this conversational moment. Precision over recall: silence is the correct default. Never invent facts.",
     prompt: buildPrompt(input),

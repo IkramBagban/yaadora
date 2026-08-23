@@ -1,7 +1,7 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { createLogger } from "@repo/logger";
-import { ingestionModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, ingestionModel } from "../ai/models";
 
 const log = createLogger("ingestion:extraction");
 
@@ -265,6 +265,7 @@ export async function extract(ctx: ExtractionContext): Promise<Extraction> {
       schema: ExtractionSchema,
       system: SYSTEM_PROMPT,
       prompt,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       // CLIProxy + some Gemini models return ```json ... ``` or slightly invalid
       // JSON even when json_schema is requested. Repair before schema validation.
       experimental_repairText: async ({ text }) => stripJsonFences(text),
@@ -278,6 +279,7 @@ export async function extract(ctx: ExtractionContext): Promise<Extraction> {
 
     const { text } = await generateText({
       model: ingestionModel,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system: `${SYSTEM_PROMPT}
 
 OUTPUT RULES (strict):

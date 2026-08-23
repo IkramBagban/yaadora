@@ -4,6 +4,7 @@ import {
   db,
   conversations,
   conversationTurns,
+  recordTurnActivity,
   eq,
   and,
   desc,
@@ -226,6 +227,9 @@ export async function streamConversationTurn(params: {
       turnCount: sql`${conversations.turnCount} + 1`,
     })
     .where(eq(conversations.id, conversationId));
+
+  // Activity counter (issue #30): one conversation turn. Fire-and-forget.
+  void recordTurnActivity(userId).catch(() => undefined);
 
   const history =
     params.historyAlreadyLoaded ??
