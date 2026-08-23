@@ -64,11 +64,6 @@ export function formatUsd(n: number | null | undefined): string {
   return `$${n.toFixed(2)}`
 }
 
-/** "Est." prefix helper for AI cost figures — always labelled as estimates. */
-export function costLabel(usd: number | null | undefined): string {
-  return `≈ ${formatUsd(usd)}`
-}
-
 export function formatDurationMs(ms: number): string {
   if (!Number.isFinite(ms)) return '—'
   if (ms < 1000) return `${Math.round(ms)}ms`
