@@ -1,4 +1,20 @@
-import { pgTable, uuid, text, timestamp, integer, time, boolean } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  time,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+/**
+ * `user_role` — coarse access level (issue #30). 'admin' is granted at
+ * provisioning when the email appears in the ADMIN_EMAILS env allowlist;
+ * there is no self-service promotion path.
+ */
+export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 /**
  * users — every row in the system is scoped by `user_id`.
@@ -24,6 +40,8 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   clerkUserId: text("clerk_user_id").unique(),
   email: text("email").notNull().unique(),
+  // 'admin' only via ADMIN_EMAILS bootstrap at first provisioning (issue #30).
+  role: userRole("role").notNull().default("user"),
   timezone: text("timezone").notNull().default("UTC"),
   transcriptRetentionDays: integer("transcript_retention_days"), // null = keep forever, 0 = digest immediately
   quietHoursStart: time("quiet_hours_start").notNull().default("22:00:00"), // local
