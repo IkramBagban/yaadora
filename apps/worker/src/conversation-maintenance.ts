@@ -4,6 +4,7 @@ import {
   captureFromConversation,
   createRedisConnection,
   ingestionModel,
+  runWithUsageContext,
 } from "@repo/core";
 import {
   db,
@@ -221,7 +222,11 @@ async function runIdleSweep(): Promise<number> {
   let processed = 0;
   for (const convo of idleCandidates) {
     try {
-      await processIdleConversation(convo);
+      // Attribution (issue #30): the summary + capture LLM calls inside roll
+      // up to this conversation's owner in ai_usage_daily.
+      await runWithUsageContext({ userId: convo.userId }, () =>
+        processIdleConversation(convo),
+      );
       processed++;
     } catch (err) {
       log.error("idle process failed", {

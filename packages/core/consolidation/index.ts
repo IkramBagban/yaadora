@@ -22,6 +22,7 @@ import {
   expireStaleOpenLoops,
   type NewFact,
 } from "@repo/db";
+import { runWithUsageContext } from "../request-context";
 import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/models";
 
 /**
@@ -77,26 +78,31 @@ export async function runConsolidation(
 
   const reports: ConsolidationReport[] = [];
   for (const userId of userIds) {
-    const profilesRebuilt = await rebuildEntityProfiles(userId, since);
-    const factsMerged = await dedupFacts(userId);
-    const insightsWritten = await minePatterns(userId);
-    await rescoreSalience(userId);
-    // Edges derive from the (now deduped/rescored) facts; digests read facts +
-    // conversation summaries. Both run last so they see this run's updates.
-    const edgesMaterialized = await materializeEntityEdges(userId);
-    const digestsBuilt = await buildDigests(userId);
-    // Retire dated check-ins the user never engaged with (spec 04 §3.1). Runs
-    // last: it only reads `status`/`due_at` and the ledger, nothing above.
-    const loopsExpired = await expireStaleOpenLoops(userId, new Date());
-    reports.push({
-      userId,
-      profilesRebuilt,
-      factsMerged,
-      insightsWritten,
-      edgesMaterialized,
-      digestsBuilt,
-      loopsExpired,
+    // Attribution (issue #30): every LLM call in this user's pass rolls up to
+    // them in ai_usage_daily (phase defaults to "other" for consolidation).
+    const report = await runWithUsageContext({ userId }, async () => {
+      const profilesRebuilt = await rebuildEntityProfiles(userId, since);
+      const factsMerged = await dedupFacts(userId);
+      const insightsWritten = await minePatterns(userId);
+      await rescoreSalience(userId);
+      // Edges derive from the (now deduped/rescored) facts; digests read facts +
+      // conversation summaries. Both run last so they see this run's updates.
+      const edgesMaterialized = await materializeEntityEdges(userId);
+      const digestsBuilt = await buildDigests(userId);
+      // Retire dated check-ins the user never engaged with (spec 04 §3.1). Runs
+      // last: it only reads `status`/`due_at` and the ledger, nothing above.
+      const loopsExpired = await expireStaleOpenLoops(userId, new Date());
+      return {
+        userId,
+        profilesRebuilt,
+        factsMerged,
+        insightsWritten,
+        edgesMaterialized,
+        digestsBuilt,
+        loopsExpired,
+      } satisfies ConsolidationReport;
     });
+    reports.push(report);
   }
   return reports;
 }

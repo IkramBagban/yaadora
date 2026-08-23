@@ -10,6 +10,10 @@ import {
   type IngestionJobData,
   type ConsolidationJobData,
 } from "@repo/core";
+import {
+  finishConsolidationRun,
+  startConsolidationRun,
+} from "@repo/db";
 import { createLogger, initLogging } from "@repo/logger";
 import {
   scheduleConversationMaintenance,
@@ -142,8 +146,34 @@ const consolidationWorker = new Worker<ConsolidationJobData>(
   CONSOLIDATION_QUEUE_NAME,
   async (job: Job<ConsolidationJobData>) => {
     log.info("consolidation started", { jobId: job.id, userId: job.data.userId });
-    const reports = await runConsolidation({ userId: job.data.userId });
-    log.info("consolidation done", { users: reports.length, reports });
+    // Run history (issue #30): one consolidation_runs row per execution.
+    const runId = await startConsolidationRun();
+    try {
+      const reports = await runConsolidation({ userId: job.data.userId });
+      // Persist the same counters we already log below.
+      await finishConsolidationRun(runId, {
+        status: "ok",
+        counters: {
+          users: reports.length,
+          reports: reports.map((r) => ({ ...r })),
+        },
+      });
+      log.info("consolidation done", { users: reports.length, reports });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        await finishConsolidationRun(runId, {
+          status: "error",
+          counters: null,
+          error: message,
+        });
+      } catch (finishErr) {
+        log.error("could not record failed consolidation run", {
+          message: finishErr instanceof Error ? finishErr.message : String(finishErr),
+        });
+      }
+      throw err;
+    }
   },
   { connection: createRedisConnection(), concurrency: 1 },
 );
