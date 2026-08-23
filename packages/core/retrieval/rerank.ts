@@ -5,7 +5,7 @@ import type {
   RetrievedFact,
   RetrievedMemory,
 } from "@repo/db";
-import { fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, fastModel } from "../ai/models";
 import { createLogger } from "@repo/logger";
 
 const log = createLogger("retrieval:rerank");
@@ -176,6 +176,7 @@ export async function rerankCandidates(params: {
     const result = await generateObject({
       model: fastModel,
       schema: RerankSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You are the reranking stage of a personal memory system. Score how " +
         "relevant each candidate is to answering the question, from 0 (irrelevant) " +

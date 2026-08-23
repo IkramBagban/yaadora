@@ -23,7 +23,13 @@ import {
   type NewFact,
 } from "@repo/db";
 import { runWithUsageContext } from "../request-context";
-import { ingestionModel, reasoningModel, embedText, embedTexts } from "../ai/models";
+import {
+  EXPERIMENTAL_TELEMETRY,
+  ingestionModel,
+  reasoningModel,
+  embedText,
+  embedTexts,
+} from "../ai/models";
 
 /**
  * Consolidation — the nightly "sleep" job (spec 02 §5). Rebuildable from the
@@ -124,6 +130,7 @@ async function rebuildEntityProfiles(
     const { object } = await generateObject({
       model: ingestionModel,
       schema: ProfileSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You maintain a personal memory system. Write a concise, factual profile summary of the given subject from the known facts. Third person, no speculation.",
       prompt: `Subject: ${entity.canonicalName} (${entity.type})
@@ -250,6 +257,7 @@ async function minePatterns(userId: string): Promise<number> {
   const { object } = await generateObject({
     model: reasoningModel,
     schema: PatternSchema,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system:
       "You are the consolidation ('sleep') stage of a personal memory system. You are given a user's whole knowledge graph — their people/projects, relationships, open threads, and a dated timeline of memories. Find RECURRING patterns or non-obvious connections the user may not have connected themselves (e.g. 'the last five projects all went quiet around week three', 'low energy is mentioned on most late-night-work days'). Rules: (1) every insight MUST be supported by MULTIPLE specific memories — cite their exact ids from the timeline; the more independent supporting memories, the better. (2) State each insight as a neutral observation about the user, never a judgment or diagnosis. (3) Only report patterns you could defend with the receipts; set confidence honestly. (4) If there are no real, well-supported patterns, return an empty list — silence is correct and expected.",
     prompt: serializeGraphForPatterns(snapshot),
@@ -332,6 +340,7 @@ async function buildDigests(userId: string): Promise<number> {
     const { object } = await generateObject({
       model: ingestionModel,
       schema: DigestSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You maintain a personal memory system. Write a concise 3–5 sentence profile of the USER from these known current facts about them. Third person, factual, no speculation, invent nothing.",
       prompt: profileFacts.map((f) => `- ${f}`).join("\n"),
@@ -357,6 +366,7 @@ async function buildDigests(userId: string): Promise<number> {
     const { object } = await generateObject({
       model: ingestionModel,
       schema: DigestSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You maintain a personal memory system. Summarize the user's PAST 7 DAYS into ONE compact paragraph (≤120 words): what they did, decided, felt, and what's still ongoing. Factual, no speculation, invent nothing. If there is little, keep it short.",
       prompt: [...memLines, ...convLines].join("\n"),

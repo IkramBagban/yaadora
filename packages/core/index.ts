@@ -7,6 +7,7 @@ export {
   AI_PROVIDER,
   // Text embedding entrypoint (rules test endpoint embeds probe text).
   embedText,
+  EXPERIMENTAL_TELEMETRY,
 } from "./ai/models";
 // fastModel stays internal to core (awareness / matcher / push copy).
 

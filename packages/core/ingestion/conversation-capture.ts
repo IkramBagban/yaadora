@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { db, memories } from "@repo/db";
 import { createLogger } from "@repo/logger";
-import { fastModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, fastModel } from "../ai/models";
 import { enqueueIngestion } from "../queues";
 
 const log = createLogger("ingestion:capture");
@@ -135,6 +135,7 @@ export async function captureFromConversation(params: {
     const { object: gate } = await generateObject({
       model: fastModel,
       schema: CaptureGateSchema,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system: SYSTEM_PROMPT,
       prompt: `Current datetime (resolve any relative times against this): ${now.toISOString()} (UTC)
 

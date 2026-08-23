@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import {
   captureFromConversation,
   createRedisConnection,
+  EXPERIMENTAL_TELEMETRY,
   ingestionModel,
   runWithUsageContext,
 } from "@repo/core";
@@ -75,6 +76,7 @@ async function generateConversationSummary(
   try {
     const { text } = await generateText({
       model: ingestionModel,
+      experimental_telemetry: EXPERIMENTAL_TELEMETRY,
       system:
         "You summarise personal assistant conversations for long-term memory. Write 2–5 sentences in third person about the user: topics discussed, facts stated, decisions, plans. No bullet lists. Omit chit-chat. If nothing substantive, return a single short sentence.",
       prompt: `Summarise this conversation:\n\n${clipped}`,

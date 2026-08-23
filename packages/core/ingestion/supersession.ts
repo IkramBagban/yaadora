@@ -9,7 +9,7 @@ import {
   type NewFact,
   type SupersessionCandidate,
 } from "@repo/db";
-import { ingestionModel } from "../ai/models";
+import { EXPERIMENTAL_TELEMETRY, ingestionModel } from "../ai/models";
 
 /**
  * Contradiction / update detection (spec 02 §2.5).
@@ -131,6 +131,7 @@ async function classifyRelation(
   const { object } = await generateObject({
     model: ingestionModel,
     schema: RelationSchema,
+    experimental_telemetry: EXPERIMENTAL_TELEMETRY,
     system: SYSTEM_PROMPT,
     prompt: `NEW fact: "${fact.factText}" (valid from ${fmt(fact.validFrom)})
 EXISTING fact: "${cand.factText}" (valid from ${fmt(cand.validFrom)})`,
