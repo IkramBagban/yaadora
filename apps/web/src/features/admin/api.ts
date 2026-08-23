@@ -2,6 +2,7 @@ import {
   useInfiniteQuery,
   useMutation,
   useQuery,
+  useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
 import { request } from '../../api/client'
@@ -223,10 +224,21 @@ export function useAdminUserUsage(
   })
 }
 
-/** Reprocess mutation. Returns queued flag; callers flip the row badge optimistically. */
+/**
+ * Reprocess mutation. Callers flip the row badge optimistically and keep
+ * that override rendered until the tab remounts; a successful enqueue also
+ * invalidates the user's records queries so fresh ingestion status loads
+ * behind it.
+ */
 export function useReprocessMemory(userId: string) {
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (memoryId: string) => reprocessMemory(userId, memoryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [...adminKeys.all, 'user', userId, 'memories'],
+      })
+    },
   })
 }
 
