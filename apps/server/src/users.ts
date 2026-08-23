@@ -10,6 +10,22 @@ import { createLogger } from "@repo/logger";
 
 const log = createLogger("server:users");
 
+/**
+ * Admin bootstrap (issue #30): emails listed in ADMIN_EMAILS (comma-separated,
+ * case-insensitive) are provisioned with role='admin'. Promotion happens only
+ * at provisioning — changing the env later never demotes existing admins and
+ * does not retro-promote existing users.
+ */
+function isAdminEmail(email: string): boolean {
+  const raw = process.env.ADMIN_EMAILS;
+  if (!raw || raw.trim().length === 0) return false;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0)
+    .includes(email.toLowerCase());
+}
+
 export async function resolveLocalUserId(
   clerkUserId: string,
   email: string,
@@ -47,6 +63,7 @@ export async function resolveLocalUserId(
         clerkUserId,
         email: email.toLowerCase(),
         timezone,
+        role: isAdminEmail(email) ? "admin" : "user",
       })
       .returning({ id: users.id });
 
@@ -55,6 +72,7 @@ export async function resolveLocalUserId(
       clerkUserId,
       email: email.toLowerCase(),
       timezone,
+      admin: isAdminEmail(email),
     });
     return created!.id;
   } catch (err) {
@@ -81,7 +99,11 @@ export async function resolveLocalUserId(
     if (byEmail && !byEmail.clerkUserId) {
       await db
         .update(users)
-        .set({ clerkUserId })
+        // Admin bootstrap also applies when linking a legacy bootstrap row.
+        .set({
+          clerkUserId,
+          ...(isAdminEmail(email) ? { role: "admin" as const } : {}),
+        })
         .where(eq(users.id, byEmail.id));
       log.info("linked Clerk id to existing email user", {
         userId: byEmail.id,
