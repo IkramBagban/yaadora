@@ -133,7 +133,8 @@ export type ConsolidationRunCounters =
 
 /**
  * consolidation_runs — history of nightly consolidation executions.
- * status 'ok' | 'error'; `error` carries the message when status='error'.
+ * status 'running' while in flight, then 'ok' | 'error'; `error` carries the
+ * message when status='error'.
  */
 export const consolidationRuns = pgTable("consolidation_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
