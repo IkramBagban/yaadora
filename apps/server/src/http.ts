@@ -15,6 +15,9 @@ export function apiError(
 export const unauthorized = () =>
   apiError("unauthorized", "Missing or invalid bearer token.", 401);
 
+export const forbidden = (message = "Admin role required.") =>
+  apiError("forbidden", message, 403);
+
 export const notFound = (message = "Not found.") =>
   apiError("not_found", message, 404);
 
