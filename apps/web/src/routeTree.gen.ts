@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AskRouteImport } from './routes/ask'
 import { Route as FactsRouteImport } from './routes/facts'
 import { Route as GraphRouteImport } from './routes/graph'
@@ -19,12 +20,22 @@ import { Route as RemindersRouteImport } from './routes/reminders'
 import { Route as RulesRouteImport } from './routes/rules'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminActivityRouteImport } from './routes/admin.activity'
+import { Route as AdminEngineRouteImport } from './routes/admin.engine'
 import { Route as EntitiesIndexRouteImport } from './routes/entities.index'
 import { Route as EntitiesIdRouteImport } from './routes/entities.$id'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin.users.index'
+import { Route as AdminUsersIdRouteImport } from './routes/admin.users.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AskRoute = AskRouteImport.update({
@@ -72,6 +83,21 @@ const TimelineRoute = TimelineRouteImport.update({
   path: '/timeline',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminActivityRoute = AdminActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminEngineRoute = AdminEngineRouteImport.update({
+  id: '/engine',
+  path: '/engine',
+  getParentRoute: () => AdminRoute,
+} as any)
 const EntitiesIndexRoute = EntitiesIndexRouteImport.update({
   id: '/entities/',
   path: '/entities/',
@@ -82,9 +108,20 @@ const EntitiesIdRoute = EntitiesIdRouteImport.update({
   path: '/entities/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminUsersIdRoute = AdminUsersIdRouteImport.update({
+  id: '/users/$id',
+  path: '/users/$id',
+  getParentRoute: () => AdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/ask': typeof AskRoute
   '/facts': typeof FactsRoute
   '/graph': typeof GraphRoute
@@ -94,8 +131,13 @@ export interface FileRoutesByFullPath {
   '/rules': typeof RulesRoute
   '/settings': typeof SettingsRoute
   '/timeline': typeof TimelineRoute
+  '/admin/activity': typeof AdminActivityRoute
+  '/admin/engine': typeof AdminEngineRoute
   '/entities/$id': typeof EntitiesIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/entities/': typeof EntitiesIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -108,12 +150,18 @@ export interface FileRoutesByTo {
   '/rules': typeof RulesRoute
   '/settings': typeof SettingsRoute
   '/timeline': typeof TimelineRoute
+  '/admin/activity': typeof AdminActivityRoute
+  '/admin/engine': typeof AdminEngineRoute
   '/entities/$id': typeof EntitiesIdRoute
+  '/admin': typeof AdminIndexRoute
   '/entities': typeof EntitiesIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/users': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteWithChildren
   '/ask': typeof AskRoute
   '/facts': typeof FactsRoute
   '/graph': typeof GraphRoute
@@ -123,13 +171,19 @@ export interface FileRoutesById {
   '/rules': typeof RulesRoute
   '/settings': typeof SettingsRoute
   '/timeline': typeof TimelineRoute
+  '/admin/activity': typeof AdminActivityRoute
+  '/admin/engine': typeof AdminEngineRoute
   '/entities/$id': typeof EntitiesIdRoute
+  '/admin/': typeof AdminIndexRoute
   '/entities/': typeof EntitiesIndexRoute
+  '/admin/users/$id': typeof AdminUsersIdRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/ask'
     | '/facts'
     | '/graph'
@@ -139,8 +193,13 @@ export interface FileRouteTypes {
     | '/rules'
     | '/settings'
     | '/timeline'
+    | '/admin/activity'
+    | '/admin/engine'
     | '/entities/$id'
+    | '/admin/'
     | '/entities/'
+    | '/admin/users/$id'
+    | '/admin/users/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -153,11 +212,17 @@ export interface FileRouteTypes {
     | '/rules'
     | '/settings'
     | '/timeline'
+    | '/admin/activity'
+    | '/admin/engine'
     | '/entities/$id'
+    | '/admin'
     | '/entities'
+    | '/admin/users/$id'
+    | '/admin/users'
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/ask'
     | '/facts'
     | '/graph'
@@ -167,12 +232,18 @@ export interface FileRouteTypes {
     | '/rules'
     | '/settings'
     | '/timeline'
+    | '/admin/activity'
+    | '/admin/engine'
     | '/entities/$id'
+    | '/admin/'
     | '/entities/'
+    | '/admin/users/$id'
+    | '/admin/users/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRouteWithChildren
   AskRoute: typeof AskRoute
   FactsRoute: typeof FactsRoute
   GraphRoute: typeof GraphRoute
@@ -193,6 +264,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ask': {
@@ -258,6 +336,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TimelineRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/activity': {
+      id: '/admin/activity'
+      path: '/activity'
+      fullPath: '/admin/activity'
+      preLoaderRoute: typeof AdminActivityRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/engine': {
+      id: '/admin/engine'
+      path: '/engine'
+      fullPath: '/admin/engine'
+      preLoaderRoute: typeof AdminEngineRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/entities/': {
       id: '/entities/'
       path: '/entities'
@@ -272,11 +371,44 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EntitiesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/users/$id': {
+      id: '/admin/users/$id'
+      path: '/users/$id'
+      fullPath: '/admin/users/$id'
+      preLoaderRoute: typeof AdminUsersIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
   }
 }
 
+interface AdminRouteChildren {
+  AdminActivityRoute: typeof AdminActivityRoute
+  AdminEngineRoute: typeof AdminEngineRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  AdminUsersIdRoute: typeof AdminUsersIdRoute
+  AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminActivityRoute: AdminActivityRoute,
+  AdminEngineRoute: AdminEngineRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  AdminUsersIdRoute: AdminUsersIdRoute,
+  AdminUsersIndexRoute: AdminUsersIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRouteWithChildren,
   AskRoute: AskRoute,
   FactsRoute: FactsRoute,
   GraphRoute: GraphRoute,
