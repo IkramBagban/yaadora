@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { db, reminders, eq, and, gte, desc, asc, inArray } from "@repo/db";
+import {
+  db,
+  reminders,
+  recordReminderDoneActivity,
+  eq,
+  and,
+  gte,
+  desc,
+  asc,
+  inArray,
+} from "@repo/db";
 import { createLogger } from "@repo/logger";
 import { authenticate } from "../auth";
 import { json, badRequest, notFound, unauthorized, serverError } from "../http";
@@ -286,6 +296,8 @@ export async function completeReminder(req: Request, id: string): Promise<Respon
     log.debug("reminder complete: not found", { userId, reminderId: id });
     return notFound("Reminder not found.");
   }
+  // Activity counter (issue #30): reminders_done. Fire-and-forget.
+  void recordReminderDoneActivity(userId).catch(() => undefined);
   log.info("reminder completed", { userId, reminderId: id });
   return json(updated);
 }

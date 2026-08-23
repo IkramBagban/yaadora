@@ -10,6 +10,7 @@
 
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { createLogger } from "@repo/logger";
+import { bindRequestUser } from "@repo/core";
 import { resolveLocalUserId } from "./users";
 
 const log = createLogger("server:auth");
@@ -124,6 +125,9 @@ export async function authenticate(req: Request): Promise<string | null> {
       userId: bootstrapUserId,
       ms: Date.now() - started,
     });
+    // Attribution (issue #30): make the resolved user visible to every LLM
+    // call downstream in this request's async context.
+    bindRequestUser(bootstrapUserId);
     return bootstrapUserId;
   }
 
@@ -201,6 +205,9 @@ export async function authenticate(req: Request): Promise<string | null> {
       timezoneHint: timezoneHint ?? null,
       ms: Date.now() - started,
     });
+    // Attribution (issue #30): bind the resolved user to this request's async
+    // context so AI usage + activity rollups attribute to them.
+    bindRequestUser(userId);
     return userId;
   } catch (err) {
     log.warn("auth rejected: token verification failed", {

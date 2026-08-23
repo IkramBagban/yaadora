@@ -2,6 +2,7 @@ import {
   transcribeAudio,
   isTranscriptionConfigured,
   getBiasTermsForUser,
+  recordProdUsage,
   AllKeysExhaustedError,
   MAX_AUDIO_BYTES,
 } from "@repo/core";
@@ -108,6 +109,18 @@ export async function transcribe(req: Request): Promise<Response> {
       chars: result.text.length,
       durationMs: result.durationMs,
       biasTerms: biasTerms.length,
+    });
+
+    // Usage instrumentation (issue #30): transcription is not an AI-SDK call,
+    // so the model middleware can't see it — record the phase='transcribe'
+    // event explicitly (tokens 0, calls+1). Fire-and-forget.
+    void recordProdUsage({
+      tier: "transcription",
+      model: result.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      latencyMs: result.durationMs,
+      phase: "transcribe",
     });
 
     return json({
